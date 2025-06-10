@@ -26,7 +26,10 @@
     "start": "craco start",
     "build": "craco build",
     "test": "craco test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "deploy:preview": "npm run build && wrangler pages deploy build",
+    "deploy:staging": "npm run build && wrangler pages deploy build --branch=staging",
+    "deploy:production": "npm run build && wrangler pages deploy build --branch=main"
   },
   "eslintConfig": {
     "extends": [

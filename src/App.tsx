@@ -688,53 +688,47 @@ function App() {
                         </div>
 
                         {(() => {
-                          const firstContainer = optimizationResult.packedContainers[0];
-                          
-                          if (!firstContainer) {
+                          if (!optimizationResult.packedContainers || optimizationResult.packedContainers.length === 0) {
                             return <p className="text-gray-500 text-lg">No container data available</p>;
                           }
                           
-                          // Calculate metrics for the first container
-                          let cartonsPerContainer = 0;
-                          let palletsPerContainer = 0;
+                          // Show actual container data from the optimization result
+                          const containerResults: Array<{
+                            description: string;
+                            cartons: number;
+                            pallets: number;
+                          }> = [];
                           
-                          if (firstContainer.contents) {
-                            if (usePallets) {
-                              palletsPerContainer = firstContainer.contents.length;
-                              cartonsPerContainer = firstContainer.contents.reduce((total: number, pallet: any) => {
-                                return total + (pallet.cartons?.length || 0);
-                              }, 0);
-                            } else {
-                              cartonsPerContainer = firstContainer.contents.length;
+                          optimizationResult.packedContainers.forEach((container, index) => {
+                            let cartons = 0;
+                            let pallets = 0;
+                            
+                            if (container.contents) {
+                              if (usePallets && container.contentType === 'pallets') {
+                                pallets = container.contents.length;
+                                cartons = container.contents.reduce((total: number, pallet: any) => {
+                                  return total + (pallet.cartons?.length || 0);
+                                }, 0);
+                              } else if (!usePallets && container.contentType === 'cartons') {
+                                cartons = container.contents.length;
+                              }
                             }
-                          }
-                          
-                          // Show results for each container
-                          const containerResults = [];
-                          
-                          // First container(s) with full pattern
-                          const fullContainers = Math.floor(optimizationResult.totalCartonsPacked / cartonsPerContainer);
-                          const remainingCartons = optimizationResult.totalCartonsPacked % cartonsPerContainer;
-                          
-                          if (fullContainers > 0) {
-                            containerResults.push({
-                              description: fullContainers === 1 ? "Container 1" : `Containers 1-${fullContainers}`,
-                              cartons: cartonsPerContainer,
-                              pallets: palletsPerContainer
-                            });
-                          }
-                          
-                          // Last container with remaining cartons (if any)
-                          if (remainingCartons > 0) {
-                            const lastContainerNumber = fullContainers + 1;
-                            const remainingPallets = usePallets ? Math.ceil(remainingCartons / (cartonsPerContainer / palletsPerContainer)) : 0;
+                            
+                            // Add debug info about this container
+                            console.log(`Container ${index + 1}: ${pallets} pallets, ${cartons} cartons`);
                             
                             containerResults.push({
-                              description: `Container ${lastContainerNumber} (Final)`,
-                              cartons: remainingCartons,
-                              pallets: remainingPallets
+                              description: index === optimizationResult.packedContainers.length - 1 && optimizationResult.packedContainers.length > 1
+                                ? `Container ${index + 1} (Final)`
+                                : `Container ${index + 1}`,
+                              cartons: cartons,
+                              pallets: pallets
                             });
-                          }
+                          });
+                          
+                          // Calculate total pallets from actual container data for comparison
+                          const totalPalletsFromContainers = containerResults.reduce((sum, container) => sum + container.pallets, 0);
+                          console.log(`Total pallets from containers: ${totalPalletsFromContainers}, from result: ${optimizationResult.totalPalletsUsed}`);
                           
                           return (
                             <div className="space-y-4">

@@ -366,12 +366,13 @@ export function unifiedOptimization (
       let maxAvailableWeightCapacityForOrientation = 0; // Renamed
 
       if (usePallets && pallet) {
-          // When using pallets, the total available space and weight capacity should be based on the number of containers needed to hold all pallets.
-          // The number of containers needed is implicitly handled by `numUnitsRequired` (which is the total number of pallets calculated).
-          totalAvailableVolumeForOrientation = numUnitsRequired * (container.length * container.width * container.height);
-          maxAvailableWeightCapacityForOrientation = numUnitsRequired * container.maxWeight;
+          // When using pallets, we need to calculate how many containers are needed to hold all the pallets
+          // This calculation will be done later in the code where pallets per container is calculated
+          // For now, use a placeholder - we'll fix this after we calculate totalContainersNeeded
+          totalAvailableVolumeForOrientation = 1 * (container.length * container.width * container.height);
+          maxAvailableWeightCapacityForOrientation = 1 * container.maxWeight;
       } else {
-          // When directly packing into containers, consider the total volume and weight capacity of all required containers
+          // When directly packing into containers, numUnitsRequired represents the number of containers needed
           totalAvailableVolumeForOrientation = numUnitsRequired * (container.length * container.width * container.height);
           maxAvailableWeightCapacityForOrientation = numUnitsRequired * container.maxWeight;
       }
@@ -562,8 +563,8 @@ export function unifiedOptimization (
                   if (maxPalletsPerSingleContainer === 0) {
                       totalContainersNeeded = 0;
                   } else {
-                      // Total containers needed based on total pallets (numUnitsRequired) and realistic max pallets per container
-                      totalContainersNeeded = Math.ceil(generatedPalletPositions.length / maxPalletsPerSingleContainer);
+                      // Total containers needed based on actual pallets required (numUnitsRequired) and realistic max pallets per container
+                      totalContainersNeeded = Math.ceil(numUnitsRequired / maxPalletsPerSingleContainer);
                   }
               }
 
@@ -640,6 +641,17 @@ export function unifiedOptimization (
               }
               // Update totalUnitsUsed based on totalContainersNeeded
               bestPatternResult.totalUnitsUsed = totalContainersNeeded;
+              
+              // Now that we have totalContainersNeeded, update the volume and weight calculations
+              totalAvailableVolumeForOrientation = totalContainersNeeded * (container.length * container.width * container.height);
+              maxAvailableWeightCapacityForOrientation = totalContainersNeeded * container.maxWeight;
+              
+              // Update space utilization and weight distribution with correct values
+              const correctedSpaceUtilization = totalAvailableVolumeForOrientation > 0 ? (packedVolumeForOrientation / totalAvailableVolumeForOrientation) * 100 : 0;
+              const correctedWeightDistribution = maxAvailableWeightCapacityForOrientation > 0 ? (totalWeightPackedForOrientation / maxAvailableWeightCapacityForOrientation) * 100 : 0;
+              
+              console.log(`    CORRECTED - Total Available Volume: ${totalAvailableVolumeForOrientation}, Space utilization: ${correctedSpaceUtilization}`);
+              console.log(`    CORRECTED - Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Weight distribution: ${correctedWeightDistribution}`);
 
           } else { // Direct packing into container - now potentially multiple containers
               // Set totalContainersNeeded for direct container packing
@@ -802,22 +814,38 @@ export function unifiedOptimization (
                   : (firstContainer.contents as PackedPallet[]).reduce((sum, pallet) => sum + pallet.cartons.length, 0)
           ) : 0;
 
+          // Calculate total cartons that can be packed across all containers (not just first container)
+          // Use the already calculated currentTotalCartonsPacked which represents total cartons packed across all units
+          const totalCartonsAcrossAllContainers = currentTotalCartonsPacked;
+          
           // This block was moved out of the previous if-condition,
           // as it should update bestPatternResult whenever a better orientation is found.
           // The if-condition inside the orientation loop is for updating currentPackedContainers.
           // The actual update to bestPatternResult should happen here if current result is better.
-          if (actualCartonsInFirstContainer > bestPatternResult.totalCartonsPacked ||
-              (actualCartonsInFirstContainer === bestPatternResult.totalCartonsPacked && spaceUtilizationForComparison > bestPatternResult.spaceUtilization)) { // Secondary criteria: better space utilization
+          // Priority: 1) Total cartons packed across all containers, 2) Space utilization in first container
+          if (totalCartonsAcrossAllContainers > bestPatternResult.totalCartonsPacked ||
+              (totalCartonsAcrossAllContainers === bestPatternResult.totalCartonsPacked && spaceUtilizationForComparison > bestPatternResult.spaceUtilization)) {
 
-              // Use the calculated totalContainersNeeded from either pallet or direct container logic
+              // Calculate the total containers needed, including partial containers (round up)
+              let actualContainersNeeded = 0;
+              if (usePallets && pallet) {
+                  // For pallets: ensure we round up for partial containers when there are remaining cartons
+                  actualContainersNeeded = Math.max(totalContainersNeeded, 
+                      totalCartonsAcrossAllContainers < carton.quantity ? totalContainersNeeded + 1 : totalContainersNeeded);
+              } else {
+                  // For direct container packing: calculate based on cartons per container
+                  actualContainersNeeded = maxCartonsPerSingleUnit > 0 
+                      ? Math.ceil(totalCartonsAcrossAllContainers / maxCartonsPerSingleUnit)
+                      : 0;
+              }
 
               bestPatternResult = {
-                  utilization: (actualCartonsInFirstContainer / carton.quantity) * 100, // This is carton quantity utilization
+                  utilization: (totalCartonsAcrossAllContainers / carton.quantity) * 100, // This is carton quantity utilization
                   spaceUtilization: spaceUtilizationForComparison, // Use for comparison
                   weightDistribution: weightDistributionForComparison, // Use for comparison
-                  totalCartonsPacked: actualCartonsInFirstContainer, // Only cartons in first container
-                  remainingCartons: carton.quantity - actualCartonsInFirstContainer,
-                  totalUnitsUsed: totalContainersNeeded, // Actual containers needed for all cartons
+                  totalCartonsPacked: totalCartonsAcrossAllContainers, // Total cartons across all containers
+                  remainingCartons: Math.max(0, carton.quantity - totalCartonsAcrossAllContainers),
+                  totalUnitsUsed: actualContainersNeeded, // Actual containers needed for all cartons (rounded up)
                   totalPalletsUsed: usePallets && pallet ? numUnitsRequired : 0, // Total pallets needed for all containers
                   selectedPattern: pattern,
                   bestOrientation: cartonRotationType,
@@ -828,6 +856,12 @@ export function unifiedOptimization (
                       brick: pattern === 'brick' ? spaceUtilizationForComparison : (brickResult?.spaceUtilization || 0),
                   },
               };
+              
+              // Debug logging for pallet calculation
+              console.log(`    BEST RESULT UPDATE - Pattern: ${pattern}, Orientation: ${cartonRotationType}`);
+              console.log(`    Cartons per pallet: ${maxCartonsPerSingleUnit}, Total cartons: ${carton.quantity}`);
+              console.log(`    Calculated pallets needed: ${numUnitsRequired}, Containers needed: ${actualContainersNeeded}`);
+              console.log(`    Total cartons packed: ${totalCartonsAcrossAllContainers}, Remaining: ${Math.max(0, carton.quantity - totalCartonsAcrossAllContainers)}`);
           }
       } // Closes for-orientation
 
