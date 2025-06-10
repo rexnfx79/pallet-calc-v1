@@ -47,9 +47,11 @@ export interface OptimizationResult {
   totalCartonsPacked: number;
   remainingCartons: number;
   totalUnitsUsed: number;
+  totalPalletsUsed: number; // Total pallets needed for all containers
   patternComparison: {
     column: number;
     interlock: number;
+    brick: number;
   };
   selectedPattern: string;
   bestOrientation?: string;
@@ -95,7 +97,7 @@ export function unifiedOptimization (
   console.log("Input Pallet:", pallet);
   console.log("Input Container:", container);
 
-  const { length: cL, width: cW, height: cH, weight: cWgt, quantity: cQ } = carton;
+  const { length: cL, width: cW, height: cH, weight: cWgt } = carton;
   const pL = pallet?.length || 0;
   const pW = pallet?.width || 0;
   const pH = pallet?.height || 0;
@@ -109,21 +111,7 @@ export function unifiedOptimization (
   console.log("Pallet dimensions (parsed):", { pL, pW, pH, pMW });
   console.log("Container dimensions (parsed):", { cntL, cntW, cntH, cntMW });
 
-  // Helper to calculate how many cartons fit along a given dimension
-  const calculatePackedDimensions = (
-    availableLength: number,
-    availableWidth: number,
-    cartonDim1: number,
-    cartonDim2: number,
-    allowRotation: boolean
-  ) => {
-    let fit1 = Math.floor(availableLength / cartonDim1) * Math.floor(availableWidth / cartonDim2);
-    let fit2 = 0;
-    if (allowRotation) {
-      fit2 = Math.floor(availableLength / cartonDim2) * Math.floor(availableWidth / cartonDim1);
-    }
-    return Math.max(fit1, fit2);
-  };
+
 
   // Function to calculate cartons per layer for a given pattern
   const calculateLayer = (
@@ -132,37 +120,77 @@ export function unifiedOptimization (
     cartonLength: number,
     cartonWidth: number,
     allowRotation: boolean,
-    pattern: 'column' | 'interlock'
+    pattern: 'column' | 'interlock' | 'brick'
   ) => {
-    let cartonsPerLayer = 0;
-    let rotation = '';
+    // Determine the best orientation based on fit
+    const orientations = [
+      { l: cartonLength, w: cartonWidth, rotation: 'L_W' }
+    ];
     
-    // Column stack: No rotation on base, simply fit as many as possible
-    const fitA = Math.floor(baseLength / cartonLength) * Math.floor(baseWidth / cartonWidth);
-    const fitB = allowRotation ? Math.floor(baseLength / cartonWidth) * Math.floor(baseWidth / cartonLength) : 0;
-
-    if (fitA >= fitB) {
-      cartonsPerLayer = fitA;
-      rotation = 'L_W'; // Length along baseLength, Width along baseWidth
-    } else {
-      cartonsPerLayer = fitB;
-      rotation = 'W_L'; // Width along baseLength, Length along baseWidth
+    if (allowRotation) {
+      orientations.push({ l: cartonWidth, w: cartonLength, rotation: 'W_L' });
     }
 
-    if (pattern === 'interlock') {
-        // For interlock, we assume a slight reduction in efficiency, or a more complex calculation
-        // For simplicity here, we'll apply a common approximation for interlock patterns
-        // A more sophisticated approach would involve specific interlock algorithms
-        cartonsPerLayer = Math.floor(cartonsPerLayer * 0.9); // Example: 10% reduction for interlock
+    let bestFit = { cartonsPerLayer: 0, rotation: 'L_W' };
+
+    for (const orientation of orientations) {
+      const { l: cL, w: cW, rotation } = orientation;
+      
+      // Ensure cartons fit within base dimensions
+      if (cL > baseLength || cW > baseWidth) {
+        continue;
+      }
+
+      let cartonsPerLayer = 0;
+
+      switch (pattern) {
+        case 'column':
+          // Simple grid placement - maximum density
+          const cartonsAlongLength = Math.floor(baseLength / cL);
+          const cartonsAlongWidth = Math.floor(baseWidth / cW);
+          cartonsPerLayer = cartonsAlongLength * cartonsAlongWidth;
+          break;
+
+        case 'interlock':
+          // Interlocking pattern - alternate rows are offset by half carton length
+          const rowsInterlocked = Math.floor(baseWidth / cW);
+          const cartonsPerNormalRow = Math.floor(baseLength / cL);
+          const cartonsPerOffsetRow = Math.floor((baseLength - cL/2) / cL);
+          
+          // Alternate between normal and offset rows
+          const normalRows = Math.ceil(rowsInterlocked / 2);
+          const offsetRows = Math.floor(rowsInterlocked / 2);
+          
+          cartonsPerLayer = (normalRows * cartonsPerNormalRow) + (offsetRows * cartonsPerOffsetRow);
+          break;
+
+        case 'brick':
+          // Brick pattern - similar to interlock but with smaller offset for stability
+          // All cartons remain fully supported from below
+          const rowsBrick = Math.floor(baseWidth / cW);
+          const cartonsPerNormalRowBrick = Math.floor(baseLength / cL);
+          const cartonsPerOffsetRowBrick = Math.floor((baseLength - cL/3) / cL); // Smaller offset (1/3 instead of 1/2)
+          
+          // Alternate between normal and offset rows
+          const normalRowsBrick = Math.ceil(rowsBrick / 2);
+          const offsetRowsBrick = Math.floor(rowsBrick / 2);
+          
+          cartonsPerLayer = (normalRowsBrick * cartonsPerNormalRowBrick) + (offsetRowsBrick * cartonsPerOffsetRowBrick);
+          break;
+
+        default:
+          cartonsPerLayer = 0;
+      }
+
+      if (cartonsPerLayer > bestFit.cartonsPerLayer) {
+        bestFit = { cartonsPerLayer, rotation };
+      }
     }
     
-    return { cartonsPerLayer, rotation };
+    return bestFit;
   };
 
-  // Determine carton orientation for packing on base
-  let currentCL = cL;
-  let currentCW = cW;
-  let currentCH = cH;
+
 
   // Function to get cartons per layer for a specific orientation
   const getCartonsPerLayer = (
@@ -171,7 +199,7 @@ export function unifiedOptimization (
     cartonL: number,
     cartonW: number,
     allowRotation: boolean,
-    pattern: 'column' | 'interlock'
+    pattern: 'column' | 'interlock' | 'brick'
   ) => {
     return calculateLayer(
       palletOrContainerLength,
@@ -194,8 +222,8 @@ export function unifiedOptimization (
     cartonOrientations.push({ l: cW, w: cL, h: cH, rotation: 'WLH' });
   }
 
-  // Vertical rotation (L, H, W) if allowVerticalRotation is true
-  if (constraints.allowVerticalRotation) {
+  // Vertical rotation (L, H, W) if allowVerticalRotation is true AND thisSideUp is false
+  if (constraints.allowVerticalRotation && !thisSideUp) {
     cartonOrientations.push({ l: cL, w: cH, h: cW, rotation: 'LHW' });
     // And if allowRotationOnBase is also true, then (H, L, W)
     if (constraints.allowRotationOnBase) {
@@ -204,7 +232,7 @@ export function unifiedOptimization (
   }
 
   // More vertical rotations
-  if (constraints.allowVerticalRotation) {
+  if (constraints.allowVerticalRotation && !thisSideUp) {
     cartonOrientations.push({ l: cW, w: cH, h: cL, rotation: 'WHL' });
     if (constraints.allowRotationOnBase) {
       cartonOrientations.push({ l: cH, w: cW, h: cL, rotation: 'HWL' });
@@ -219,19 +247,21 @@ export function unifiedOptimization (
     totalCartonsPacked: 0,
     remainingCartons: carton.quantity,
     totalUnitsUsed: 0,
-    patternComparison: { column: 0, interlock: 0 },
+    totalPalletsUsed: 0,
+    patternComparison: { column: 0, interlock: 0, brick: 0 },
     selectedPattern: 'auto',
     bestOrientation: '',
   };
 
   /* ─── choose pattern(s) ─────────────────────────────── */
-  const stackingPatternsToConsider: ('column' | 'interlock')[] =
+  const stackingPatternsToConsider: ('column' | 'interlock' | 'brick')[] =
     constraints.stackingPattern === 'auto'
-      ? ['column', 'interlock']
-      : [constraints.stackingPattern as 'column' | 'interlock'];
+      ? ['column', 'interlock', 'brick']
+      : [constraints.stackingPattern as 'column' | 'interlock' | 'brick'];
 
   let columnResult: OptimizationResult | null = null;
   let interlockResult: OptimizationResult | null = null;
+  let brickResult: OptimizationResult | null = null;
 
   /* ─── MAIN PATTERN LOOP ─────────────────────────────── */
   for (const pattern of stackingPatternsToConsider) {
@@ -314,43 +344,48 @@ export function unifiedOptimization (
 
       // Calculate space utilization for the current orientation and pattern
       const volumeCarton = oCL * oCW * oCH;
-      let packedVolume = 0;
-      let totalWeightPacked = 0;
+      let packedVolumeForOrientation = 0; // Renamed to avoid confusion with overallPackedVolume at the end
+      let totalWeightPackedForOrientation = 0; // Renamed
 
       if (usePallets && pallet) {
-          // Calculate packed volume by summing the effective volume of each packed pallet (pallet + cartons on it)
-          packedVolume = numUnitsRequired * (pallet.length * pallet.width * (pallet.height + totalLayersPossible * oCH));
+          // Calculate packed volume by summing the effective volume of each carton within the pallets.
+          // This ensures we're only measuring carton volume.
+          packedVolumeForOrientation = currentTotalCartonsPacked * volumeCarton; // Corrected to only consider carton volume
+
           // For now, only consider carton weight, as pallet weight is not a property.
-          totalWeightPacked = currentTotalCartonsPacked * cWgt;
+          totalWeightPackedForOrientation = currentTotalCartonsPacked * cWgt;
 
       } else { // Direct packing into container
-          packedVolume = currentTotalCartonsPacked * volumeCarton;
-          totalWeightPacked = currentTotalCartonsPacked * cWgt;
+          packedVolumeForOrientation = currentTotalCartonsPacked * volumeCarton;
+          totalWeightPackedForOrientation = currentTotalCartonsPacked * cWgt;
       }
 
       // Correct total available volume and max available weight capacity.
       // These should always refer to the overall available space, considering multiple units if needed.
-      let totalAvailableVolume = 0;
-      let maxAvailableWeightCapacity = 0;
+      let totalAvailableVolumeForOrientation = 0; // Renamed
+      let maxAvailableWeightCapacityForOrientation = 0; // Renamed
 
       if (usePallets && pallet) {
-          // When using pallets, the total available space is effectively the container's capacity
-          totalAvailableVolume = container.length * container.width * container.height;
-          maxAvailableWeightCapacity = container.maxWeight;
+          // When using pallets, the total available space and weight capacity should be based on the number of containers needed to hold all pallets.
+          // The number of containers needed is implicitly handled by `numUnitsRequired` (which is the total number of pallets calculated).
+          totalAvailableVolumeForOrientation = numUnitsRequired * (container.length * container.width * container.height);
+          maxAvailableWeightCapacityForOrientation = numUnitsRequired * container.maxWeight;
       } else {
           // When directly packing into containers, consider the total volume and weight capacity of all required containers
-          totalAvailableVolume = numUnitsRequired * (container.length * container.width * container.height);
-          maxAvailableWeightCapacity = numUnitsRequired * container.maxWeight;
+          totalAvailableVolumeForOrientation = numUnitsRequired * (container.length * container.width * container.height);
+          maxAvailableWeightCapacityForOrientation = numUnitsRequired * container.maxWeight;
       }
 
-      let currentSpaceUtilization = totalAvailableVolume > 0 ? (packedVolume / totalAvailableVolume) * 100 : 0;
-      let currentWeightDistribution = maxAvailableWeightCapacity > 0 ? (totalWeightPacked / maxAvailableWeightCapacity) * 100 : 0;
+      const overallUtilizationForOrientation = totalAvailableVolumeForOrientation > 0 ? (packedVolumeForOrientation / totalAvailableVolumeForOrientation) * 100 : 0; // Renamed
 
-      console.log(`    Volume Carton: ${volumeCarton}, Packed Volume: ${packedVolume}`);
-      console.log(`    Total Available Volume: ${totalAvailableVolume}, Current space utilization: ${currentSpaceUtilization}`);
-      console.log(`    Total Weight Packed: ${totalWeightPacked}, Max Available Weight Capacity: ${maxAvailableWeightCapacity}, Current weight distribution: ${currentWeightDistribution}`);
+      console.log(`    Volume Carton: ${volumeCarton}, Packed Volume: ${packedVolumeForOrientation}`);
+      console.log(`    Total Available Volume: ${totalAvailableVolumeForOrientation}, Current space utilization: ${overallUtilizationForOrientation}`);
+      // Correctly log weight distribution, assuming totalWeightPackedForOrientation and maxAvailableWeightCapacityForOrientation are already in scope and correct for current unit
+      console.log(`    Total Weight Packed: ${totalWeightPackedForOrientation}, Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Current weight distribution: ${maxAvailableWeightCapacityForOrientation > 0 ? (totalWeightPackedForOrientation / maxAvailableWeightCapacityForOrientation) * 100 : 0}`);
 
       let currentPackedContainers: PackedContainer[] = [];
+      let totalContainersNeeded = 0; // Declare at scope accessible to both paths
+      
       if (usePallets && pallet) {
           const generatedPalletPositions: PackedPallet[] = [];
           let cartonsPackedForViz = 0; // Track cartons packed for visualization
@@ -366,36 +401,59 @@ export function unifiedOptimization (
               
               let currentCartonRelativeX = 0;
               let currentCartonRelativeY = 0;
-              let currentCartonRelativeZ = 0; // Relative to pallet's top surface (Z=0 on pallet top)
+              let currentCartonRelativeZ = pallet.height; // Start above pallet surface
               let layerIndex = 0;
               let cartonsInCurrentLayer = 0;
+              let rowIndex = 0; // Track row number for interlocking pattern
 
+              // Use proper stacking pattern for carton placement
               for (let j = 0; j < cartonsOnThisPallet; j++) {
+                  // Apply pattern-specific offsets at the beginning of each row
+                  let xOffset = 0;
+                  if (pattern === 'interlock' && rowIndex % 2 === 1) {
+                      // Offset every other row by half carton length for interlock pattern
+                      xOffset = oCL / 2;
+                  } else if (pattern === 'brick' && rowIndex % 2 === 1) {
+                      // Offset every other row by one-third carton length for brick pattern (more stable)
+                      xOffset = oCL / 3;
+                  }
+
+                  const effectiveX = currentCartonRelativeX + xOffset;
+
+                  // Check if carton fits within pallet boundaries with offset
+                  if (effectiveX + oCL > pallet.length || 
+                      currentCartonRelativeY + oCW > pallet.width ||
+                      currentCartonRelativeZ + oCH > currentHeightForStacking) {
+                      break; // Stop if carton doesn't fit
+                  }
+
                   currentPalletCartons.push({
-                      position: { x: currentCartonRelativeX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
-                      rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH', // Use the layer's determined rotation
+                      position: { x: effectiveX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
+                      rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
                       length: oCL,
                       width: oCW,
                       height: oCH,
                   });
 
                   cartonsInCurrentLayer++;
+
+                  // Move to next position
                   currentCartonRelativeX += oCL;
 
-                  if (currentCartonRelativeX + oCL > pallet.length) { // If row is full or next carton overflows pallet width
+                  // Check if next carton will fit in current row
+                  if (currentCartonRelativeX + oCL > pallet.length) {
                       currentCartonRelativeX = 0;
                       currentCartonRelativeY += oCW;
-                  }
+                      rowIndex++; // Move to next row
 
-                  if (currentCartonRelativeY + oCW > pallet.width) { // If layer is full or next row overflows pallet length
-                      currentCartonRelativeY = 0;
-                      currentCartonRelativeX = 0; // Reset X for new layer
-                      currentCartonRelativeZ += oCH; // Move to next layer
-                      layerIndex++;
-                  }
-                  // Break if next layer exceeds effective height for cartons on pallet
-                  if (currentCartonRelativeZ + oCH > currentHeightForStacking) {
-                      break;
+                      // Check if next carton will fit in current layer
+                      if (currentCartonRelativeY + oCW > pallet.width) {
+                          currentCartonRelativeY = 0;
+                          currentCartonRelativeZ += oCH;
+                          layerIndex++;
+                          rowIndex = 0; // Reset row index for new layer
+                          cartonsInCurrentLayer = 0; // Reset layer counter
+                      }
                   }
               }
               cartonsPackedForViz += cartonsOnThisPallet;
@@ -446,8 +504,6 @@ export function unifiedOptimization (
 
               let bestPalletsPerContainerBase = 0;
               let bestPalletHeightForContainer = 0;
-              let effectivePalletLengthInContainer = pL;
-              let effectivePalletWidthInContainer = pW;
 
               for (const pOrient of palletOrientationsInContainer) {
                   const { l: oPL, w: oPW, h: oPH } = pOrient;
@@ -463,23 +519,50 @@ export function unifiedOptimization (
                   if (currentPalletsPerBaseLayer > bestPalletsPerContainerBase) {
                       bestPalletsPerContainerBase = currentPalletsPerBaseLayer;
                       bestPalletHeightForContainer = oPH;
-                      effectivePalletLengthInContainer = oPL;
-                      effectivePalletWidthInContainer = oPW;
                   }
               }
 
-              let totalContainersNeeded = 0;
+              // totalContainersNeeded is now declared at higher scope
 
               if (bestPalletsPerContainerBase === 0 || bestPalletHeightForContainer === 0) {
                   totalContainersNeeded = 0;
               } else {
-                  const palletLayersInContainer = Math.floor(cntH / bestPalletHeightForContainer);
-                  maxPalletsPerSingleContainer = bestPalletsPerContainerBase * palletLayersInContainer;
+                  // Pallets should only be placed on the floor (single layer only)
+                  const calculatedMaxPallets = bestPalletsPerContainerBase; // Only one layer on floor
+                  
+                  // Apply realistic pallet capacity constraints for containers
+                  let realMaxPalletsPerContainer = calculatedMaxPallets;
+                  
+                  // Determine if pallets are Euro or US size based on dimensions
+                  const isEuroPallet = pallet && ((pallet.length === 120 && pallet.width === 80) || (pallet.length === 80 && pallet.width === 120));
+                  const isUSPallet = pallet && ((pallet.length === 120 && pallet.width === 100) || (pallet.length === 100 && pallet.width === 120));
+                  
+                  // Apply realistic limits for 40ft containers (most common)
+                  if (container.length >= 1200) { // 40ft container
+                      if (isEuroPallet) {
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 24); // Max 24 Euro pallets
+                      } else if (isUSPallet) {
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 21); // Max 21 US pallets
+                      } else {
+                          // For other pallet sizes, use a conservative estimate
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 20);
+                      }
+                  } else { // 20ft container
+                      if (isEuroPallet) {
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 11); // Max 11 Euro pallets
+                      } else if (isUSPallet) {
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 10); // Max 10 US pallets
+                      } else {
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 10);
+                      }
+                  }
+                  
+                  maxPalletsPerSingleContainer = realMaxPalletsPerContainer;
 
                   if (maxPalletsPerSingleContainer === 0) {
                       totalContainersNeeded = 0;
                   } else {
-                      // Total containers needed based on total pallets (numUnitsRequired) and max pallets per container
+                      // Total containers needed based on total pallets (numUnitsRequired) and realistic max pallets per container
                       totalContainersNeeded = Math.ceil(generatedPalletPositions.length / maxPalletsPerSingleContainer);
                   }
               }
@@ -488,7 +571,8 @@ export function unifiedOptimization (
               let palletIndex = 0;
               let containerXOffset = 0; // For placing containers side-by-side if needed
 
-              for (let i = 0; i < totalContainersNeeded; i++) {
+              // Only process the first container for calculation and visualization
+              for (let i = 0; i < Math.min(1, totalContainersNeeded); i++) {
                   const palletsInThisContainer: PackedPallet[] = [];
                   let currentPalletRelativeX = 0;
                   let currentPalletRelativeY = 0;
@@ -497,63 +581,70 @@ export function unifiedOptimization (
                   for (let j = 0; j < maxPalletsPerSingleContainer && palletIndex < generatedPalletPositions.length; j++) {
                       const palletToAdd = generatedPalletPositions[palletIndex];
                       
+                      // Check if pallet fits on floor (z = 0) at current position
+                      if (currentPalletRelativeX + palletToAdd.palletDimensions.length > container.length) {
+                          currentPalletRelativeX = 0;
+                          currentPalletRelativeY += palletToAdd.palletDimensions.width;
+                      }
+                      
+                      // Check if pallet fits in container on floor level only
+                      if (currentPalletRelativeY + palletToAdd.palletDimensions.width > container.width ||
+                          currentPalletRelativeZ + palletToAdd.palletDimensions.height > container.height) {
+                          break; // Stop placing pallets - no more space on floor
+                      }
+                      
                       const positionedPallet: PackedPallet = {
                           ...palletToAdd,
                           position: {
                               x: currentPalletRelativeX,
                               y: currentPalletRelativeY,
-                              z: currentPalletRelativeZ,
+                              z: 0, // Always place pallets on the floor
                           },
                       };
                       palletsInThisContainer.push(positionedPallet);
+
+                      // Update position for next pallet AFTER placing current one
+                      currentPalletRelativeX += palletToAdd.palletDimensions.length;
                       palletIndex++;
-
-                      currentPalletRelativeX += effectivePalletLengthInContainer;
-
-                      if (currentPalletRelativeX + effectivePalletLengthInContainer > cntL) {
-                          currentPalletRelativeX = 0;
-                          currentPalletRelativeY += effectivePalletWidthInContainer;
-                      }
-
-                      if (currentPalletRelativeY + effectivePalletWidthInContainer > cntW) {
-                          currentPalletRelativeY = 0;
-                          currentPalletRelativeX = 0; // Reset X for new layer
-                          currentPalletRelativeZ += bestPalletHeightForContainer;
-                      }
                   }
 
-                  if (palletsInThisContainer.length > 0) {
-                      const containerVolume = container.length * container.width * container.height;
-                      const containerMaxWeight = container.maxWeight;
-
-                      const packedVolumeForThisContainer = palletsInThisContainer.reduce((sum, p) => 
-                          (p.palletDimensions.length * p.palletDimensions.width * p.palletDimensions.height) +
-                          (p.cartons.reduce((cSum, c) => cSum + c.length * c.width * c.height, 0))
-                      , 0);
-
-                      const totalWeightPackedForThisContainer = palletsInThisContainer.reduce((sum, p) => 
-                          p.cartons.reduce((cSum, c) => cSum + carton.weight, 0)
-                      , 0);
-
-                      const utilizationForThisContainer = containerVolume > 0 ? (packedVolumeForThisContainer / containerVolume) * 100 : 0;
-                      const weightDistributionForThisContainer = containerMaxWeight > 0 ? (totalWeightPackedForThisContainer / containerMaxWeight) * 100 : 0;
-
-                      currentPackedContainers.push({
-                          containerDimensions: { ...container },
-                          position: { x: containerXOffset, y: 0, z: 0 }, // Place containers side-by-side
-                          contents: palletsInThisContainer,
-                          contentType: 'pallets',
-                          utilization: utilizationForThisContainer,
-                          weightDistribution: weightDistributionForThisContainer,
+                  // Calculate utilization for this specific packed container (which contains pallets)
+                  let containerPackedVolume = 0;
+                  let containerPackedWeight = 0;
+                  palletsInThisContainer.forEach(p => {
+                      // Only carton volume for space utilization
+                      p.cartons.forEach(c => {
+                          containerPackedVolume += c.length * c.width * c.height;
+                          containerPackedWeight += carton.weight;
                       });
-                      containerXOffset += container.length; // Move X offset for the next container
-                  }
-              }
+                  });
 
+                  const containerVolume = container.length * container.width * container.height;
+                  const containerUtilization = containerVolume > 0
+                      ? Math.min(100, (containerPackedVolume / containerVolume) * 100)
+                      : 0;
+
+                  const containerWeightDistribution = container.maxWeight > 0
+                      ? Math.min(100, (containerPackedWeight / container.maxWeight) * 100)
+                      : 0;
+
+                  currentPackedContainers.push({
+                      containerDimensions: container,
+                      position: { x: containerXOffset, y: 0, z: 0 },
+                      contents: palletsInThisContainer,
+                      contentType: 'pallets',
+                      utilization: containerUtilization,
+                      weightDistribution: containerWeightDistribution,
+                  });
+                  containerXOffset += container.length; // For simple side-by-side visualization
+              }
               // Update totalUnitsUsed based on totalContainersNeeded
               bestPatternResult.totalUnitsUsed = totalContainersNeeded;
 
           } else { // Direct packing into container - now potentially multiple containers
+              // Set totalContainersNeeded for direct container packing
+              totalContainersNeeded = numUnitsRequired;
+              
               const generatedPackedContainers: PackedContainer[] = [];
               let cartonsPackedOverall = 0;
               let currentContainerX = 0;
@@ -563,8 +654,8 @@ export function unifiedOptimization (
               const containerVolume = container.length * container.width * container.height;
               const containerMaxWeight = container.maxWeight;
 
-              // Loop through containers until all cartons are packed or no more containers can fit.
-              for (let i = 0; i < numUnitsRequired; i++) {
+              // Only process the first container for calculation and visualization
+              for (let i = 0; i < Math.min(1, numUnitsRequired); i++) {
                   if (cartonsPackedOverall >= currentTotalCartonsPacked) break; // All cartons packed
 
                   const currentContainerCartons: CartonPosition[] = [];
@@ -572,8 +663,10 @@ export function unifiedOptimization (
                   let currentCartonRelativeY = 0;
                   let currentCartonRelativeZ = 0;
                   let cartonsInCurrentContainer = 0;
+                  let layerIndex = 0;
+                  let rowIndex = 0; // Track row number for interlocking pattern
 
-                  const { cartonsPerLayer, rotation: layerRotation } = getCartonsPerLayer(
+                  const { rotation: layerRotation } = getCartonsPerLayer(
                       container.length,
                       container.width,
                       oCL,
@@ -581,15 +674,33 @@ export function unifiedOptimization (
                       constraints.allowRotationOnBase,
                       pattern
                   );
-                  const maxLayersInContainer = Math.floor(container.height / oCH);
                   const cartonsToPackInThisContainer = Math.min(
                       maxCartonsPerSingleUnit,
-                      currentTotalCartonsPacked - cartonsPackedOverall
+                      carton.quantity // Use total carton quantity for the first container
                   );
 
                   for (let j = 0; j < cartonsToPackInThisContainer; j++) {
+                      // Apply pattern-specific offsets at the beginning of each row
+                      let xOffset = 0;
+                      if (pattern === 'interlock' && rowIndex % 2 === 1) {
+                          // Offset every other row by half carton length for interlock pattern
+                          xOffset = oCL / 2;
+                      } else if (pattern === 'brick' && rowIndex % 2 === 1) {
+                          // Offset every other row by one-third carton length for brick pattern (more stable)
+                          xOffset = oCL / 3;
+                      }
+
+                      const effectiveX = currentCartonRelativeX + xOffset;
+
+                      // Check if carton fits within container boundaries with offset
+                      if (effectiveX + oCL > container.length || 
+                          currentCartonRelativeY + oCW > container.width ||
+                          currentCartonRelativeZ + oCH > container.height) {
+                          break; // Stop if carton doesn't fit
+                      }
+
                       currentContainerCartons.push({
-                          position: { x: currentCartonRelativeX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
+                          position: { x: effectiveX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
                           rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
                           length: oCL,
                           width: oCW,
@@ -598,17 +709,24 @@ export function unifiedOptimization (
 
                       cartonsInCurrentContainer++;
                       cartonsPackedOverall++;
+                      
+                      // Move to next position
                       currentCartonRelativeX += oCL;
 
+                      // Check if next carton will fit in current row
                       if (currentCartonRelativeX + oCL > container.length) {
                           currentCartonRelativeX = 0;
                           currentCartonRelativeY += oCW;
-                      }
-
-                      if (currentCartonRelativeY + oCW > container.width) {
-                          currentCartonRelativeY = 0;
-                          currentCartonRelativeX = 0;
-                          currentCartonRelativeZ += oCH;
+                          rowIndex++; // Move to next row
+                          
+                          // Check if next carton will fit in current layer  
+                          if (currentCartonRelativeY + oCW > container.width) {
+                              currentCartonRelativeY = 0;
+                              currentCartonRelativeX = 0;
+                              currentCartonRelativeZ += oCH;
+                              layerIndex++; // Move to next layer
+                              rowIndex = 0; // Reset row index for new layer
+                          }
                       }
                       if (currentCartonRelativeZ + oCH > container.height) {
                           break; // No more layers fit in this container
@@ -619,8 +737,8 @@ export function unifiedOptimization (
                   const packedVolumeForThisContainer = cartonsInCurrentContainer * volumeCartonForThisContainer;
                   const totalWeightPackedForThisContainer = cartonsInCurrentContainer * cWgt;
 
-                  const utilizationForThisContainer = containerVolume > 0 ? (packedVolumeForThisContainer / containerVolume) * 100 : 0;
-                  const weightDistributionForThisContainer = containerMaxWeight > 0 ? (totalWeightPackedForThisContainer / containerMaxWeight) * 100 : 0;
+                  const utilizationForThisContainer = containerVolume > 0 ? Math.min(100, (packedVolumeForThisContainer / containerVolume) * 100) : 0;
+                  const weightDistributionForThisContainer = containerMaxWeight > 0 ? Math.min(100, (totalWeightPackedForThisContainer / containerMaxWeight) * 100) : 0;
 
 
                   generatedPackedContainers.push({
@@ -643,52 +761,71 @@ export function unifiedOptimization (
               currentPackedContainers = generatedPackedContainers;
           }
 
-          const overallPackedVolume = currentPackedContainers.reduce((sum, container) => {
-              if (container.contentType === 'cartons') {
-                  return sum + (container.contents as CartonPosition[]).reduce((cartonSum, cartonPos) => {
-                      return cartonSum + (cartonPos.length * cartonPos.width * cartonPos.height);
-                  }, 0);
-              } else if (container.contentType === 'pallets') {
-                  return sum + (container.contents as PackedPallet[]).reduce((palletSum, palletObj) => {
-                      return palletSum + (palletObj.palletDimensions.length * palletObj.palletDimensions.width * palletObj.palletDimensions.height) +
-                          (palletObj.cartons.reduce((cartonSum, cartonPos) => {
-                              return cartonSum + (cartonPos.length * cartonPos.width * cartonPos.height);
-                          }, 0));
-                  }, 0);
-              }
-              return sum;
-          }, 0);
+          // Only use the first container for comparison calculations
+          const firstContainer = currentPackedContainers[0];
+          let overallPackedVolumeForComparison = 0;
+          let totalWeightPackedForComparison = 0;
           
-          const totalContainerVolume = currentPackedContainers.reduce((sum, container) => {
-              return sum + (container.containerDimensions.length * container.containerDimensions.width * container.containerDimensions.height);
-          }, 0);
+          if (firstContainer) {
+              if (firstContainer.contentType === 'cartons') {
+                  (firstContainer.contents as CartonPosition[]).forEach(cartonPos => {
+                      overallPackedVolumeForComparison += cartonPos.length * cartonPos.width * cartonPos.height;
+                      totalWeightPackedForComparison += carton.weight;
+                  });
+              } else if (firstContainer.contentType === 'pallets') {
+                  (firstContainer.contents as PackedPallet[]).forEach(palletObj => {
+                      palletObj.cartons.forEach(cartonPos => {
+                          overallPackedVolumeForComparison += cartonPos.length * cartonPos.width * cartonPos.height;
+                          totalWeightPackedForComparison += carton.weight;
+                      });
+                  });
+              }
+          }
 
-          const overallUtilization = totalContainerVolume > 0 ? (overallPackedVolume / totalContainerVolume) * 100 : 0;
+          const totalAvailableVolumeForComparison = firstContainer 
+              ? firstContainer.containerDimensions.length * firstContainer.containerDimensions.width * firstContainer.containerDimensions.height
+              : 0;
 
-          let currentUtilization = (currentTotalCartonsPacked / carton.quantity) * 100;
-          currentSpaceUtilization = overallUtilization;
-          currentWeightDistribution = (totalWeightPacked / maxAvailableWeightCapacity) * 100;
+          const spaceUtilizationForComparison = totalAvailableVolumeForComparison > 0 ? (overallPackedVolumeForComparison / totalAvailableVolumeForComparison) * 100 : 0;
+
+          const maxAvailableWeightCapacityForComparison = firstContainer ? firstContainer.containerDimensions.maxWeight : 0;
+
+          const weightDistributionForComparison = maxAvailableWeightCapacityForComparison > 0
+              ? (totalWeightPackedForComparison / maxAvailableWeightCapacityForComparison) * 100
+              : 0;
+
+
+          // Calculate actual cartons packed in the first container only
+          const actualCartonsInFirstContainer = firstContainer ? (
+              firstContainer.contentType === 'cartons' 
+                  ? (firstContainer.contents as CartonPosition[]).length
+                  : (firstContainer.contents as PackedPallet[]).reduce((sum, pallet) => sum + pallet.cartons.length, 0)
+          ) : 0;
 
           // This block was moved out of the previous if-condition,
           // as it should update bestPatternResult whenever a better orientation is found.
           // The if-condition inside the orientation loop is for updating currentPackedContainers.
           // The actual update to bestPatternResult should happen here if current result is better.
-          if (currentTotalCartonsPacked > bestPatternResult.totalCartonsPacked ||
-              (currentTotalCartonsPacked === bestPatternResult.totalCartonsPacked && currentSpaceUtilization > bestPatternResult.spaceUtilization) ||
-              (currentTotalCartonsPacked === bestPatternResult.totalCartonsPacked && currentSpaceUtilization === bestPatternResult.spaceUtilization && currentWeightDistribution > bestPatternResult.weightDistribution)) {
+          if (actualCartonsInFirstContainer > bestPatternResult.totalCartonsPacked ||
+              (actualCartonsInFirstContainer === bestPatternResult.totalCartonsPacked && spaceUtilizationForComparison > bestPatternResult.spaceUtilization)) { // Secondary criteria: better space utilization
+
+              // Use the calculated totalContainersNeeded from either pallet or direct container logic
+
               bestPatternResult = {
-                  utilization: currentUtilization,
-                  spaceUtilization: currentSpaceUtilization,
-                  weightDistribution: currentWeightDistribution,
-                  totalCartonsPacked: currentTotalCartonsPacked,
-                  remainingCartons: currentRemainingCartons,
-                  totalUnitsUsed: numUnitsRequired,
+                  utilization: (actualCartonsInFirstContainer / carton.quantity) * 100, // This is carton quantity utilization
+                  spaceUtilization: spaceUtilizationForComparison, // Use for comparison
+                  weightDistribution: weightDistributionForComparison, // Use for comparison
+                  totalCartonsPacked: actualCartonsInFirstContainer, // Only cartons in first container
+                  remainingCartons: carton.quantity - actualCartonsInFirstContainer,
+                  totalUnitsUsed: totalContainersNeeded, // Actual containers needed for all cartons
+                  totalPalletsUsed: usePallets && pallet ? numUnitsRequired : 0, // Total pallets needed for all containers
                   selectedPattern: pattern,
                   bestOrientation: cartonRotationType,
                   packedContainers: currentPackedContainers,
                   patternComparison: {
-                      column: pattern === 'column' ? currentSpaceUtilization : (columnResult?.spaceUtilization || 0),
-                      interlock: pattern === 'interlock' ? currentSpaceUtilization : (interlockResult?.spaceUtilization || 0),
+                      column: pattern === 'column' ? spaceUtilizationForComparison : (columnResult?.spaceUtilization || 0),
+                      interlock: pattern === 'interlock' ? spaceUtilizationForComparison : (interlockResult?.spaceUtilization || 0),
+                      brick: pattern === 'brick' ? spaceUtilizationForComparison : (brickResult?.spaceUtilization || 0),
                   },
               };
           }
@@ -697,6 +834,7 @@ export function unifiedOptimization (
       /* save best result for this pattern */
       if (pattern === 'column')   columnResult   = bestPatternResult;
       if (pattern === 'interlock') interlockResult = bestPatternResult;
+      if (pattern === 'brick')     brickResult    = bestPatternResult;
 
       /* update global best */
       if (
@@ -713,16 +851,82 @@ export function unifiedOptimization (
 
     /* ─── auto-pattern comparison AFTER both loops ─────── */
     if (constraints.stackingPattern === 'auto') {
-      if (columnResult && interlockResult) {
-        bestOverallResult =
-          columnResult.spaceUtilization >= interlockResult.spaceUtilization
-            ? { ...columnResult,   selectedPattern: 'column'   }
-            : { ...interlockResult, selectedPattern: 'interlock' };
-      } else if (columnResult)   bestOverallResult = { ...columnResult,   selectedPattern: 'column'   };
-      else if (interlockResult)  bestOverallResult = { ...interlockResult, selectedPattern: 'interlock' };
+      // Find the best pattern result among all available patterns
+      const patternResults = [
+        { result: columnResult, name: 'column' },
+        { result: interlockResult, name: 'interlock' },
+        { result: brickResult, name: 'brick' }
+      ].filter(p => p.result !== null);
+
+      if (patternResults.length > 0) {
+        const bestPattern = patternResults.reduce((best, current) => {
+          if (!best.result || !current.result) return best;
+          
+          // Primary: total cartons packed
+          if (current.result.totalCartonsPacked > best.result.totalCartonsPacked) {
+            return current;
+          } else if (current.result.totalCartonsPacked === best.result.totalCartonsPacked) {
+            // Secondary: space utilization
+            if (current.result.spaceUtilization > best.result.spaceUtilization) {
+              return current;
+            }
+          }
+          return best;
+        });
+
+        if (bestPattern.result) {
+          bestOverallResult = { ...bestPattern.result, selectedPattern: bestPattern.name };
+        }
+      }
     }
 
-    console.log('--- Unified Optimization Result ---');
     console.log('Best Overall Result:', bestOverallResult);
+
+    // After all packing logic and selection of bestOverallResult
+    // totalUnitsUsed should reflect the actual total containers needed (but we only visualize the first one)
+
+    // Recalculate overall space utilization and weight distribution based on the first container only
+    let finalOverallPackedVolume = 0;
+    let finalTotalAvailableVolume = 0;
+    let finalTotalPackedWeight = 0;
+    let finalTotalAvailableWeightCapacity = 0;
+
+    const finalFirstContainer = bestOverallResult.packedContainers[0];
+    if (finalFirstContainer) {
+        // Only use the first container for final calculations
+        finalTotalAvailableVolume = finalFirstContainer.containerDimensions.length * finalFirstContainer.containerDimensions.width * finalFirstContainer.containerDimensions.height;
+        finalTotalAvailableWeightCapacity = finalFirstContainer.containerDimensions.maxWeight;
+
+        if (finalFirstContainer.contentType === 'pallets') {
+            (finalFirstContainer.contents as PackedPallet[]).forEach(palletObj => {
+                palletObj.cartons.forEach(cartonPos => {
+                    finalOverallPackedVolume += (cartonPos.length * cartonPos.width * cartonPos.height);
+                    finalTotalPackedWeight += carton.weight;
+                });
+            });
+        } else { // contentType === 'cartons' (direct container packing)
+            (finalFirstContainer.contents as CartonPosition[]).forEach(cartonPos => {
+                finalOverallPackedVolume += (cartonPos.length * cartonPos.width * cartonPos.height);
+                finalTotalPackedWeight += carton.weight;
+            });
+        }
+    }
+
+    // Calculate overall space utilization directly from actual volumes to ensure it never exceeds 100%
+    bestOverallResult.spaceUtilization = finalTotalAvailableVolume > 0 
+        ? (finalOverallPackedVolume / finalTotalAvailableVolume) * 100 
+        : 0;
+
+    // Calculate overall weight distribution directly from actual weights to ensure it never exceeds 100%
+    bestOverallResult.weightDistribution = finalTotalAvailableWeightCapacity > 0 
+        ? (finalTotalPackedWeight / finalTotalAvailableWeightCapacity) * 100 
+        : 0;
+
+    // Ensure 'utilization' still reflects carton quantity utilization
+    bestOverallResult.utilization = (bestOverallResult.totalCartonsPacked / carton.quantity) * 100;
+
+    // Log the final result before returning
+    console.log("--- Final Optimization Result ---", bestOverallResult);
+
     return bestOverallResult;
 }

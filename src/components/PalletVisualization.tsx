@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -34,6 +34,11 @@ interface PalletVisualizationProps {
     width: number;
     height: number;
   };
+  containerDimensions?: {
+    length: number;
+    width: number;
+    height: number;
+  };
   utilization?: number;
   className?: string;
 }
@@ -41,19 +46,21 @@ interface PalletVisualizationProps {
 export function PalletVisualization({
   pallets = [],
   cartonDimensions,
+  containerDimensions,
   utilization = 0,
   className = ""
 }: PalletVisualizationProps) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [renderer, setRenderer] = useState<THREE.WebGLRenderer | null>(null);
-  const [scene, setScene] = useState<THREE.Scene | null>(null);
-  const [camera, setCamera] = useState<THREE.PerspectiveCamera | null>(null);
-  const [controls, setControls] = useState<OrbitControls | null>(null);
-
+  const animationFrameRef = useRef<number | null>(null);
   const scaleFactor = 1000; // Convert mm to meters
 
   useEffect(() => {
     if (!mountRef.current || pallets.length === 0) return;
+
+    // Clear any existing content
+    while (mountRef.current.firstChild) {
+      mountRef.current.removeChild(mountRef.current.firstChild);
+    }
 
     // Scene setup
     const newScene = new THREE.Scene();
@@ -146,6 +153,28 @@ export function PalletVisualization({
     directionalLight.position.set(sceneSizeX, sceneSizeY * 2, sceneSizeZ).normalize();
     newScene.add(directionalLight);
 
+    // Add container wireframe if dimensions are provided
+    if (containerDimensions) {
+      const containerGeometry = new THREE.BoxGeometry(
+        containerDimensions.length / scaleFactor,
+        containerDimensions.height / scaleFactor,
+        containerDimensions.width / scaleFactor
+      );
+      const containerMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0x666666, 
+        wireframe: true,
+        transparent: true,
+        opacity: 0.3
+      });
+      const containerMesh = new THREE.Mesh(containerGeometry, containerMaterial);
+      containerMesh.position.set(
+        (containerDimensions.length / 2) / scaleFactor,
+        (containerDimensions.height / 2) / scaleFactor,
+        (containerDimensions.width / 2) / scaleFactor
+      );
+      newScene.add(containerMesh);
+    }
+
     // Add pallets and cartons to the scene
     pallets.forEach(packedPallet => {
       const palletGeometry = new THREE.BoxGeometry(
@@ -174,7 +203,7 @@ export function PalletVisualization({
         // Adjust position relative to the pallet's position
         cartonMesh.position.set(
           (packedPallet.position.x + cartonPos.position.x + cartonPos.length / 2) / scaleFactor,
-          (packedPallet.position.z + packedPallet.palletDimensions.height + cartonPos.position.z + cartonPos.height / 2) / scaleFactor,
+          (packedPallet.position.z + cartonPos.position.z + cartonPos.height / 2) / scaleFactor,
           (packedPallet.position.y + cartonPos.position.y + cartonPos.width / 2) / scaleFactor
         );
         
@@ -193,7 +222,7 @@ export function PalletVisualization({
 
     // Animation loop
     const animate = () => {
-      requestAnimationFrame(animate);
+      animationFrameRef.current = requestAnimationFrame(animate);
       newControls.update(); // only required if controls.enableDamping or controls.autoRotate are set to true
       newRenderer.render(newScene, newCamera);
     };
@@ -209,30 +238,44 @@ export function PalletVisualization({
     };
     window.addEventListener('resize', handleResize);
 
-    // Set state variables
-    setRenderer(newRenderer);
-    setScene(newScene);
-    setCamera(newCamera);
-    setControls(newControls);
-
     // Cleanup
     return () => {
-      if (mountRef.current) {
-        mountRef.current.removeChild(newRenderer.domElement);
+      // Cancel animation frame
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
+
+      // Dispose of all geometries and materials
+      newScene.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.geometry?.dispose();
+          if (Array.isArray(object.material)) {
+            object.material.forEach(material => material.dispose());
+          } else {
+            object.material?.dispose();
+          }
+        }
+      });
+
+      // Store current mount ref to avoid stale closure
+      const currentMount = mountRef.current;
+      if (currentMount && newRenderer.domElement.parentNode) {
+        currentMount.removeChild(newRenderer.domElement);
+      }
+      window.removeEventListener('resize', handleResize);
       newControls.dispose();
       newRenderer.dispose();
     };
-  }, [pallets, cartonDimensions]); // Re-run effect if pallets or cartonDimensions change
+  }, [pallets, cartonDimensions, containerDimensions]); // Re-run effect if pallets, cartonDimensions, or containerDimensions change
 
   if (pallets.length === 0) return null; // If no pallets, nothing to show
 
   return (
-    <Card className={className}>
-      <CardContent className="p-4 flex flex-col items-center justify-center">
-        <div ref={mountRef} style={{ width: '100%', height: '400px', border: '1px solid #ccc' }} />
-        <div className="mt-4">
-          <p className="text-sm text-muted-foreground">
+    <Card className={`${className} h-full`}>
+      <CardContent className="p-4 flex flex-col h-full">
+        <div ref={mountRef} style={{ width: '100%', height: '100%', minHeight: '300px', border: '1px solid #ccc' }} />
+        <div className="mt-2">
+          <p className="text-sm text-muted-foreground text-center">
             Space Utilization: {utilization.toFixed(1)}%
           </p>
         </div>
