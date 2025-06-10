@@ -140,7 +140,7 @@ export function NumericInputWithSlider({
   return (
     <div className={`space-y-2 ${className}`}>
       <div className="flex justify-between items-center">
-        <Label htmlFor={id} className="text-lg font-medium">{displayLabel}</Label>
+        <Label htmlFor={id} className="text-xl lg:text-lg font-medium">{displayLabel}</Label>
         <div className="flex items-center">
           <Input
             id={`${id}-text`}
@@ -152,14 +152,14 @@ export function NumericInputWithSlider({
             min={displayMin}
             max={displayMax}
             step={step}
-            className="w-24 h-8 text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            className="w-28 lg:w-24 h-10 lg:h-8 text-lg lg:text-base text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             disabled={disabled}
           />
           {unit && onUnitChange ? (
             <select 
               value={unit} 
               onChange={(e) => onUnitChange(e.target.value)}
-              className="ml-1 h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              className="ml-1 h-10 lg:h-8 rounded-md border border-input bg-background px-2 py-1 text-base lg:text-sm"
               disabled={disabled}
             >
               <option value="mm">mm</option>
@@ -173,7 +173,7 @@ export function NumericInputWithSlider({
               <option value="oz">oz</option>
             </select>
           ) : (
-            <span className="ml-1 text-sm text-muted-foreground">{displayUnit}</span>
+            <span className="ml-1 text-base lg:text-sm text-muted-foreground">{displayUnit}</span>
           )}
         </div>
       </div>
