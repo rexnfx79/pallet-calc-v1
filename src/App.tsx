@@ -992,7 +992,7 @@ function App() {
                                       maxWeight: containerWeightCapacity,
                                     },
                                     position: { x: 0, y: 0, z: 0 },  // Always position at origin for visualization
-                                    cartons: (container.contents as CartonPosition[] || []).slice(0, 200) // Limit to 200 cartons for performance
+                                    cartons: (container.contents as CartonPosition[] || []) // Show all cartons for accurate floor loading visualization
                                   }))}
                               cartonDimensions={{ length: cartonLength, width: cartonWidth, height: cartonHeight }}
                               containerDimensions={{ length: containerLength, width: containerWidth, height: containerHeight }}
