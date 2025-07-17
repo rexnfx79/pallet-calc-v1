@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Position Tracking Test</title>
+</head>
+<body>
+    <h1>Position Tracking Test</h1>
+    <p>Open browser console and run the test</p>
+    
+    <script>
+        // Test the positioning logic directly
+        console.log("=== POSITION TRACKING TEST ===");
+        
+        // Test pallet positioning at back of container
+        const container = { length: 1200, width: 240, height: 260 };
+        const pallet = { length: 120, width: 80, height: 14.5 };
+        
+        console.log("Container dimensions:", container);
+        console.log("Pallet dimensions:", pallet);
+        
+        // Calculate how many pallets fit
+        const palletsAlongLength = Math.floor(container.length / pallet.length);
+        const palletsAlongWidth = Math.floor(container.width / pallet.width);
+        
+        console.log(`Pallets along length: ${palletsAlongLength}`);
+        console.log(`Pallets along width: ${palletsAlongWidth}`);
+        
+        // Test positioning 6 pallets (2 rows of 3)
+        for (let j = 0; j < 6; j++) {
+            const palletRow = Math.floor(j / palletsAlongLength);
+            const palletCol = j % palletsAlongLength;
+            
+            const palletX = palletCol * pallet.length;
+            const palletY = container.width - pallet.width - (palletRow * pallet.width);
+            const palletZ = 0;
+            
+            console.log(`Pallet ${j + 1}:`);
+            console.log(`  Row: ${palletRow}, Col: ${palletCol}`);
+            console.log(`  Position: X=${palletX}, Y=${palletY}, Z=${palletZ}`);
+            console.log(`  At back? ${palletY > container.width / 2 ? 'YES' : 'NO'}`);
+        }
+        
+        // Test floor loading vertical orientations
+        const carton = { length: 30, width: 20, height: 15 };
+        console.log("\n=== FLOOR LOADING TEST ===");
+        console.log("Carton dimensions:", carton);
+        
+        const orientations = [
+            { l: 30, w: 20, h: 15, rotation: 'LWH' },
+            { l: 20, w: 30, h: 15, rotation: 'WLH' },
+            { l: 30, w: 15, h: 20, rotation: 'LHW' }, // Vertical
+            { l: 15, w: 30, h: 20, rotation: 'HLW' }, // Vertical
+            { l: 20, w: 15, h: 30, rotation: 'WHL' }, // Vertical
+            { l: 15, w: 20, h: 30, rotation: 'HWL' }  // Vertical
+        ];
+        
+        orientations.forEach(o => {
+            const cartonsAlongLength = Math.floor(container.length / o.l);
+            const cartonsAlongWidth = Math.floor(container.width / o.w);
+            const cartonsPerLayer = cartonsAlongLength * cartonsAlongWidth;
+            const layers = Math.floor(container.height / o.h);
+            const totalCartons = cartonsPerLayer * layers;
+            
+            console.log(`${o.rotation}: ${o.l}x${o.w}x${o.h} -> ${layers} layers, ${totalCartons} total cartons`);
+        });
+    </script>
+</body>
+</html> 

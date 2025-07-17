@@ -41,6 +41,7 @@ interface PalletVisualizationProps {
   };
   utilization?: number;
   className?: string;
+  usePallets?: boolean; // Add flag to know if we're using actual pallets or just containers
 }
 
 export function PalletVisualization({
@@ -48,18 +49,20 @@ export function PalletVisualization({
   cartonDimensions,
   containerDimensions,
   utilization = 0,
-  className = ""
+  className = "",
+  usePallets = true
 }: PalletVisualizationProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number | null>(null);
   const scaleFactor = 1000; // Convert mm to meters
 
   useEffect(() => {
-    if (!mountRef.current || pallets.length === 0) return;
+    const currentMount = mountRef.current;
+    if (!currentMount || pallets.length === 0) return;
 
     // Clear any existing content
-    while (mountRef.current.firstChild) {
-      mountRef.current.removeChild(mountRef.current.firstChild);
+    while (currentMount.firstChild) {
+      currentMount.removeChild(currentMount.firstChild);
     }
 
     // Scene setup
@@ -69,7 +72,7 @@ export function PalletVisualization({
     // Camera setup
     const newCamera = new THREE.PerspectiveCamera(
       75, // FOV
-      mountRef.current.clientWidth / mountRef.current.clientHeight, // Aspect ratio
+      currentMount.clientWidth / currentMount.clientHeight, // Aspect ratio
       0.1, // Near
       20000 // Far
     );
@@ -96,23 +99,26 @@ export function PalletVisualization({
       minZ = Math.min(minZ, palletZ);
       maxZ = Math.max(maxZ, palletZ + palletH);
 
-      packedPallet.cartons.forEach(cartonPos => {
-        const currentX = palletX + cartonPos.position.x;
-        const currentY = palletY + cartonPos.position.y;
-        const currentZ = palletZ + cartonPos.position.z;
+      // Safety check for cartons array
+      if (packedPallet.cartons && Array.isArray(packedPallet.cartons)) {
+        packedPallet.cartons.forEach(cartonPos => {
+          const currentX = palletX + cartonPos.position.x;
+          const currentY = palletY + cartonPos.position.y;
+          const currentZ = palletZ + cartonPos.position.z;
 
-        const cartonL = cartonPos.length;
-        const cartonW = cartonPos.width;
-        const cartonH = cartonPos.height;
+          const cartonL = cartonPos.length;
+          const cartonW = cartonPos.width;
+          const cartonH = cartonPos.height;
 
-        // Update min/max for carton itself
-        minX = Math.min(minX, currentX);
-        maxX = Math.max(maxX, currentX + cartonL);
-        minY = Math.min(minY, currentY);
-        maxY = Math.max(maxY, currentY + cartonW);
-        minZ = Math.min(minZ, currentZ);
-        maxZ = Math.max(maxZ, currentZ + cartonH);
-      });
+          // Update min/max for carton itself
+          minX = Math.min(minX, currentX);
+          maxX = Math.max(maxX, currentX + cartonL);
+          minY = Math.min(minY, currentY);
+          maxY = Math.max(maxY, currentY + cartonW);
+          minZ = Math.min(minZ, currentZ);
+          maxZ = Math.max(maxZ, currentZ + cartonH);
+        });
+      }
     });
 
     const sceneCenterX = (minX + maxX) / 2 / scaleFactor;
@@ -133,9 +139,9 @@ export function PalletVisualization({
 
     // Renderer setup
     const newRenderer = new THREE.WebGLRenderer({ antialias: true });
-    newRenderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
+    newRenderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
     newRenderer.setPixelRatio(window.devicePixelRatio);
-    mountRef.current.appendChild(newRenderer.domElement);
+    currentMount.appendChild(newRenderer.domElement);
 
     // Controls setup
     const newControls = new OrbitControls(newCamera, newRenderer.domElement);
@@ -152,6 +158,73 @@ export function PalletVisualization({
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(sceneSizeX, sceneSizeY * 2, sceneSizeZ).normalize();
     newScene.add(directionalLight);
+
+    // Add container-aligned axes if container dimensions are available
+    if (containerDimensions) {
+      const containerLength = containerDimensions.length / scaleFactor;
+      const containerWidth = containerDimensions.width / scaleFactor;
+      const containerHeight = containerDimensions.height / scaleFactor;
+      
+      // Create custom axes aligned with container edges
+      const axisGeometry = new THREE.BufferGeometry();
+      const axisPositions = new Float32Array([
+        // X-axis (Length) - Red - along bottom front edge
+        0, 0, 0,
+        containerLength, 0, 0,
+        // Y-axis (Height) - Green - along front left edge  
+        0, 0, 0,
+        0, containerHeight, 0,
+        // Z-axis (Width) - Blue - along bottom left edge
+        0, 0, 0,
+        0, 0, containerWidth
+      ]);
+      axisGeometry.setAttribute('position', new THREE.BufferAttribute(axisPositions, 3));
+      
+      const axisColors = new Float32Array([
+        // X-axis - Red
+        1, 0, 0,
+        1, 0, 0,
+        // Y-axis - Green
+        0, 1, 0,
+        0, 1, 0,
+        // Z-axis - Blue
+        0, 0, 1,
+        0, 0, 1
+      ]);
+      axisGeometry.setAttribute('color', new THREE.BufferAttribute(axisColors, 3));
+      
+      const axisMaterial = new THREE.LineBasicMaterial({ 
+        vertexColors: true,
+        linewidth: 3
+      });
+      const axisLines = new THREE.LineSegments(axisGeometry, axisMaterial);
+      newScene.add(axisLines);
+
+      // Add coordinate labels at the end of each axis
+      const createAxisLabel = (text: string, position: THREE.Vector3, color: number) => {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d')!;
+        canvas.width = 128;
+        canvas.height = 64;
+        context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+        context.font = 'Bold 20px Arial';
+        context.textAlign = 'center';
+        context.fillText(text, 64, 40);
+        
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.SpriteMaterial({ map: texture });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.copy(position);
+        sprite.scale.set(containerLength * 0.15, containerLength * 0.075, 1);
+        return sprite;
+      };
+
+      // Position labels at the end of each axis with slight offset
+      const labelOffset = containerLength * 0.05;
+      newScene.add(createAxisLabel('X (Length)', new THREE.Vector3(containerLength + labelOffset, 0, 0), 0xff0000));
+      newScene.add(createAxisLabel('Y (Height)', new THREE.Vector3(0, containerHeight + labelOffset, 0), 0x00ff00));
+      newScene.add(createAxisLabel('Z (Width)', new THREE.Vector3(0, 0, containerWidth + labelOffset), 0x0000ff));
+    }
 
     // Add container wireframe if dimensions are provided
     if (containerDimensions) {
@@ -176,48 +249,131 @@ export function PalletVisualization({
     }
 
     // Add pallets and cartons to the scene
-    pallets.forEach(packedPallet => {
-      const palletGeometry = new THREE.BoxGeometry(
-        packedPallet.palletDimensions.length / scaleFactor,
-        packedPallet.palletDimensions.height / scaleFactor,
-        packedPallet.palletDimensions.width / scaleFactor
-      );
-      const palletMaterial = new THREE.MeshPhongMaterial({ color: 0x8b4513, transparent: true, opacity: 0.7 });
-      const palletMesh = new THREE.Mesh(palletGeometry, palletMaterial);
-      palletMesh.position.set(
-        (packedPallet.position.x + packedPallet.palletDimensions.length / 2) / scaleFactor,
-        (packedPallet.position.z + packedPallet.palletDimensions.height / 2) / scaleFactor,
-        (packedPallet.position.y + packedPallet.palletDimensions.width / 2) / scaleFactor
-      );
-      newScene.add(palletMesh);
-
-      packedPallet.cartons.forEach(cartonPos => {
-        const cartonGeometry = new THREE.BoxGeometry(
-          cartonPos.length / scaleFactor,
-          cartonPos.height / scaleFactor,
-          cartonPos.width / scaleFactor
+    pallets.forEach((packedPallet, palletIndex) => {
+      // Only render actual pallets, not fake pallets for container mode
+      if (usePallets) {
+        const palletGeometry = new THREE.BoxGeometry(
+          packedPallet.palletDimensions.length / scaleFactor,
+          packedPallet.palletDimensions.height / scaleFactor,
+          packedPallet.palletDimensions.width / scaleFactor
         );
-        const cartonMaterial = new THREE.MeshPhongMaterial({ color: 0x42a5f5, transparent: true, opacity: 0.9 });
-        const cartonMesh = new THREE.Mesh(cartonGeometry, cartonMaterial);
-
-        // Adjust position relative to the pallet's position
-        cartonMesh.position.set(
-          (packedPallet.position.x + cartonPos.position.x + cartonPos.length / 2) / scaleFactor,
-          (packedPallet.position.z + cartonPos.position.z + cartonPos.height / 2) / scaleFactor,
-          (packedPallet.position.y + cartonPos.position.y + cartonPos.width / 2) / scaleFactor
+        const palletMaterial = new THREE.MeshPhongMaterial({ color: 0x8b4513, transparent: true, opacity: 0.7 });
+        const palletMesh = new THREE.Mesh(palletGeometry, palletMaterial);
+        palletMesh.position.set(
+          (packedPallet.position.x + packedPallet.palletDimensions.length / 2) / scaleFactor,
+          (packedPallet.position.z + packedPallet.palletDimensions.height / 2) / scaleFactor, // FIXED: Z is height in our coordinate system
+          (packedPallet.position.y + packedPallet.palletDimensions.width / 2) / scaleFactor
         );
+        newScene.add(palletMesh);
+
+        // Add black outline to pallet
+        const palletEdges = new THREE.EdgesGeometry(palletGeometry);
+        const palletLineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+        const palletWireframe = new THREE.LineSegments(palletEdges, palletLineMaterial);
+        palletWireframe.position.copy(palletMesh.position);
+        newScene.add(palletWireframe);
+      }
+
+      // Safety check for cartons array
+      if (packedPallet.cartons && Array.isArray(packedPallet.cartons)) {
+        console.log(`🔍 PalletVisualization: Rendering ${packedPallet.cartons.length} cartons for ${usePallets ? 'pallet' : 'floor'} loading`);
         
-        // Apply rotation if needed (simplified: only 90 degree rotation around Y for now)
-        if (cartonPos.rotation === 'WLH') {
-          cartonMesh.rotation.y = Math.PI / 2; // Rotate 90 degrees around Y axis
-        } else if (cartonPos.rotation === 'LHW') {
-          cartonMesh.rotation.z = Math.PI / 2; // Rotate 90 degrees around Z axis
-        } else if (cartonPos.rotation === 'HLW') {
-          cartonMesh.rotation.x = Math.PI / 2; // Rotate 90 degrees around X axis
-        } // Add more rotation cases as needed
+        packedPallet.cartons.forEach((cartonPos, index) => {
+          // Debug logging for floor loading (first 10 cartons)
+          if (!usePallets && index < 10) {
+            console.log(`  Carton ${index + 1}: pos(${cartonPos.position.x}, ${cartonPos.position.y}, ${cartonPos.position.z}) dim(${cartonPos.length}×${cartonPos.width}×${cartonPos.height}) rot(${cartonPos.rotation})`);
+          }
+          // FIXED: Proper carton geometry creation accounting for rotation
+          // For WLH rotation: width=30, length=50, height=25
+          // Three.js BoxGeometry(width, height, depth) should be:
+          let geometryWidth, geometryHeight, geometryDepth;
+          
+          if (cartonPos.rotation === 'WLH') {
+            // WLH rotation: cartonPos.length=30(W), cartonPos.width=50(L), cartonPos.height=25(H)
+            geometryWidth = cartonPos.length;   // 30 (W) → X-axis
+            geometryHeight = cartonPos.height;  // 25 (H) → Y-axis
+            geometryDepth = cartonPos.width;    // 50 (L) → Z-axis
+          } else {
+            // Default LWH: length → X, width → Z, height → Y
+            geometryWidth = cartonPos.length;   // X-axis
+            geometryHeight = cartonPos.height;  // Y-axis
+            geometryDepth = cartonPos.width;    // Z-axis
+          }
+          
+          const cartonGeometry = new THREE.BoxGeometry(
+            geometryWidth / scaleFactor,
+            geometryHeight / scaleFactor,
+            geometryDepth / scaleFactor
+          );
+          const cartonMaterial = new THREE.MeshPhongMaterial({ 
+            color: 0x42a5f5, 
+            transparent: true, 
+            opacity: 0.9,
+            side: THREE.DoubleSide  // Ensure cartons are visible from all angles
+          });
+          const cartonMesh = new THREE.Mesh(cartonGeometry, cartonMaterial);
 
-        newScene.add(cartonMesh);
-      });
+          // Adjust position relative to the pallet's position (or container if no pallets)
+          if (usePallets) {
+            cartonMesh.position.set(
+              (packedPallet.position.x + cartonPos.position.x + cartonPos.length / 2) / scaleFactor,
+              (packedPallet.position.z + cartonPos.position.z + cartonPos.height / 2) / scaleFactor, // FIXED: Z is height in our coordinate system
+              (packedPallet.position.y + cartonPos.position.y + cartonPos.width / 2) / scaleFactor
+            );
+                    } else {
+            // In container mode, position cartons relative to container position
+            // FIXED: Use correct geometry dimensions for positioning based on rotation
+            // Algorithm coordinates: X=length, Y=width, Z=height  
+            // 3D coordinates: X=length, Y=height, Z=width
+            cartonMesh.position.set(
+              (packedPallet.position.x + cartonPos.position.x + geometryWidth / 2) / scaleFactor,   // Container X + Carton X + center offset
+              (packedPallet.position.z + cartonPos.position.z + geometryHeight / 2) / scaleFactor, // Container Z + Carton Z (height) + center offset
+              (packedPallet.position.y + cartonPos.position.y + geometryDepth / 2) / scaleFactor   // Container Y + Carton Y (width) + center offset
+            );
+            
+            // Debug log for coordinate mapping
+            if (index < 5 && palletIndex < 2) {
+              console.log(`  Container ${palletIndex + 1} Carton ${index + 1}:`);
+              console.log(`    Container pos: (${packedPallet.position.x}, ${packedPallet.position.y}, ${packedPallet.position.z})`);
+              console.log(`    Carton local pos: (${cartonPos.position.x}, ${cartonPos.position.y}, ${cartonPos.position.z})`); 
+              console.log(`    Geometry dimensions: ${geometryWidth}×${geometryHeight}×${geometryDepth}`);
+              console.log(`    Final 3D pos: (${((packedPallet.position.x + cartonPos.position.x + geometryWidth / 2) / scaleFactor).toFixed(3)}, ${((packedPallet.position.z + cartonPos.position.z + geometryHeight / 2) / scaleFactor).toFixed(3)}, ${((packedPallet.position.y + cartonPos.position.y + geometryDepth / 2) / scaleFactor).toFixed(3)})`);
+            }
+          }
+          
+          // Apply rotation if needed - FIXED: No rotation needed for WLH since geometry is already correct
+          // The geometry dimensions are already set correctly for each rotation
+          if (cartonPos.rotation === 'WLH') {
+            // No rotation needed - geometry is already created with correct dimensions
+          } else if (cartonPos.rotation === 'LHW') {
+            cartonMesh.rotation.z = Math.PI / 2; // Rotate 90 degrees around Z axis
+          } else if (cartonPos.rotation === 'HLW') {
+            cartonMesh.rotation.x = Math.PI / 2; // Rotate 90 degrees around X axis
+          } else if (cartonPos.rotation === 'HWL') {
+            cartonMesh.rotation.y = Math.PI / 2;
+            cartonMesh.rotation.z = Math.PI / 2;
+          } else if (cartonPos.rotation === 'WHL') {
+            cartonMesh.rotation.x = Math.PI / 2;
+            cartonMesh.rotation.y = Math.PI / 2;
+          }
+          // Default 'LWH' rotation requires no rotation
+
+          newScene.add(cartonMesh);
+
+          // Add black outline to carton for better visibility
+          const cartonEdges = new THREE.EdgesGeometry(cartonGeometry);
+          const cartonLineMaterial = new THREE.LineBasicMaterial({ 
+            color: 0x000000, 
+            linewidth: 1.5,
+            transparent: true,
+            opacity: 0.8
+          });
+          const cartonWireframe = new THREE.LineSegments(cartonEdges, cartonLineMaterial);
+          cartonWireframe.position.copy(cartonMesh.position);
+          cartonWireframe.rotation.copy(cartonMesh.rotation);
+          newScene.add(cartonWireframe);
+        });
+      }
     });
 
     // Animation loop
@@ -257,16 +413,15 @@ export function PalletVisualization({
         }
       });
 
-      // Store current mount ref to avoid stale closure
-      const currentMount = mountRef.current;
-      if (currentMount && newRenderer.domElement.parentNode) {
+      // Use the captured mount ref to avoid stale closure
+      if (currentMount && newRenderer.domElement.parentNode === currentMount) {
         currentMount.removeChild(newRenderer.domElement);
       }
       window.removeEventListener('resize', handleResize);
       newControls.dispose();
       newRenderer.dispose();
     };
-  }, [pallets, cartonDimensions, containerDimensions]); // Re-run effect if pallets, cartonDimensions, or containerDimensions change
+  }, [pallets, cartonDimensions, containerDimensions, usePallets]); // Re-run effect if pallets, cartonDimensions, containerDimensions, or usePallets change
 
   if (pallets.length === 0) return null; // If no pallets, nothing to show
 

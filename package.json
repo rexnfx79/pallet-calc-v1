@@ -27,9 +27,9 @@
     "build": "craco build",
     "test": "craco test",
     "eject": "react-scripts eject",
-    "deploy:preview": "npm run build && wrangler pages deploy build",
-    "deploy:staging": "npm run build && wrangler pages deploy build --branch=staging",
-    "deploy:production": "npm run build && wrangler pages deploy build --branch=main"
+    "deploy:preview": "npm run build && wrangler pages deploy build --project-name palletizr-dev",
+    "deploy:staging": "npm run build && wrangler pages deploy build --project-name palletizr-dev --branch=staging",
+    "deploy:production": "npm run build && wrangler pages deploy build --project-name palletizr-dev --branch=main"
   },
   "eslintConfig": {
     "extends": [
@@ -48,5 +48,8 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "wrangler": "^4.21.2"
   }
 }

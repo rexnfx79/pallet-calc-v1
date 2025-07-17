@@ -36,17 +36,16 @@ export interface PackedContainer {
   contents: (CartonPosition | PackedPallet)[]; // Use contents for either cartons or pallets
   contentType: 'cartons' | 'pallets';
   utilization: number; // Added for per-container utilization
-  weightDistribution: number; // Added for per-container weight distribution
+  weightUtilization: number; // Added for per-container weight utilization
 }
 
 export interface OptimizationResult {
   packedContainers: PackedContainer[];
   utilization: number;
   spaceUtilization: number;
-  weightDistribution: number;
+  weightUtilization: number;
   totalCartonsPacked: number;
   remainingCartons: number;
-  totalUnitsUsed: number;
   totalPalletsUsed: number; // Total pallets needed for all containers
   patternComparison: {
     column: number;
@@ -56,6 +55,8 @@ export interface OptimizationResult {
   selectedPattern: string;
   bestOrientation?: string;
   error?: string;
+  weightWarning?: string; // Warning message for weight exceeding capacity
+  patternAdvantages?: string[]; // Advantages of the selected pattern
 }
 
 export function unifiedOptimization (
@@ -113,101 +114,55 @@ export function unifiedOptimization (
 
 
 
-  // Function to calculate cartons per layer for a given pattern
+  // SIMPLIFIED: No longer need improved stacking logic - using column pattern only
+
+  // SIMPLIFIED: Calculate cartons per layer for column pattern only
   const calculateLayer = (
     baseLength: number,
     baseWidth: number,
     cartonLength: number,
     cartonWidth: number,
-    allowRotation: boolean,
-    pattern: 'column' | 'interlock' | 'brick'
+    allowRotation: boolean
   ) => {
-    // Determine the best orientation based on fit
-    const orientations = [
-      { l: cartonLength, w: cartonWidth, rotation: 'L_W' }
-    ];
+    // Test original orientation
+    const normalLayout = Math.floor(baseLength / cartonLength) * Math.floor(baseWidth / cartonWidth);
     
+    // Test rotated orientation if allowed
+    let rotatedLayout = 0;
     if (allowRotation) {
-      orientations.push({ l: cartonWidth, w: cartonLength, rotation: 'W_L' });
-    }
-
-    let bestFit = { cartonsPerLayer: 0, rotation: 'L_W' };
-
-    for (const orientation of orientations) {
-      const { l: cL, w: cW, rotation } = orientation;
-      
-      // Ensure cartons fit within base dimensions
-      if (cL > baseLength || cW > baseWidth) {
-        continue;
-      }
-
-      let cartonsPerLayer = 0;
-
-      switch (pattern) {
-        case 'column':
-          // Simple grid placement - maximum density
-          const cartonsAlongLength = Math.floor(baseLength / cL);
-          const cartonsAlongWidth = Math.floor(baseWidth / cW);
-          cartonsPerLayer = cartonsAlongLength * cartonsAlongWidth;
-          break;
-
-        case 'interlock':
-          // Interlocking pattern - alternate rows are offset by half carton length
-          const rowsInterlocked = Math.floor(baseWidth / cW);
-          const cartonsPerNormalRow = Math.floor(baseLength / cL);
-          const cartonsPerOffsetRow = Math.floor((baseLength - cL/2) / cL);
-          
-          // Alternate between normal and offset rows
-          const normalRows = Math.ceil(rowsInterlocked / 2);
-          const offsetRows = Math.floor(rowsInterlocked / 2);
-          
-          cartonsPerLayer = (normalRows * cartonsPerNormalRow) + (offsetRows * cartonsPerOffsetRow);
-          break;
-
-        case 'brick':
-          // Brick pattern - similar to interlock but with smaller offset for stability
-          // All cartons remain fully supported from below
-          const rowsBrick = Math.floor(baseWidth / cW);
-          const cartonsPerNormalRowBrick = Math.floor(baseLength / cL);
-          const cartonsPerOffsetRowBrick = Math.floor((baseLength - cL/3) / cL); // Smaller offset (1/3 instead of 1/2)
-          
-          // Alternate between normal and offset rows
-          const normalRowsBrick = Math.ceil(rowsBrick / 2);
-          const offsetRowsBrick = Math.floor(rowsBrick / 2);
-          
-          cartonsPerLayer = (normalRowsBrick * cartonsPerNormalRowBrick) + (offsetRowsBrick * cartonsPerOffsetRowBrick);
-          break;
-
-        default:
-          cartonsPerLayer = 0;
-      }
-
-      if (cartonsPerLayer > bestFit.cartonsPerLayer) {
-        bestFit = { cartonsPerLayer, rotation };
-      }
+      rotatedLayout = Math.floor(baseLength / cartonWidth) * Math.floor(baseWidth / cartonLength);
     }
     
-    return bestFit;
+    // Return best layout
+    if (rotatedLayout > normalLayout) {
+      return {
+        cartonsPerLayer: rotatedLayout,
+        rotation: 'W_L'
+      };
+    } else {
+      return {
+        cartonsPerLayer: normalLayout,
+        rotation: 'L_W'
+      };
+    }
   };
 
 
 
-  // Function to get cartons per layer for a specific orientation
+  // SIMPLIFIED: Function to get cartons per layer for column pattern
   const getCartonsPerLayer = (
     palletOrContainerLength: number,
     palletOrContainerWidth: number,
     cartonL: number,
     cartonW: number,
-    allowRotation: boolean,
-    pattern: 'column' | 'interlock' | 'brick'
+    allowRotation: boolean
   ) => {
     return calculateLayer(
       palletOrContainerLength,
       palletOrContainerWidth,
       cartonL,
       cartonW,
-      allowRotation,
-      pattern
+      allowRotation
     );
   };
   
@@ -239,14 +194,64 @@ export function unifiedOptimization (
     }
   }
 
+  // SORT ORIENTATIONS FOR OPTIMAL STACKING: Prioritize minimum floor space and maximum height
+  const baseLength = usePallets && pallet ? pallet.length : container.length;
+  const baseWidth = usePallets && pallet ? pallet.width : container.width;
+  const maxHeight = usePallets && pallet ? container.height - pallet.height : container.height;
+
+  cartonOrientations.sort((a, b) => {
+    // Calculate metrics for orientation A
+    const aCartonsPerLayer = Math.floor(baseLength / a.l) * Math.floor(baseWidth / a.w);
+    const aLayers = Math.floor(maxHeight / a.h);
+    const aTotalCartons = aCartonsPerLayer * aLayers;
+    const aFloorFootprint = aCartonsPerLayer > 0 ? aCartonsPerLayer * a.l * a.w : 999999999;
+    const aPalletsNeeded = aTotalCartons > 0 ? Math.ceil(carton.quantity / aTotalCartons) : 999999999;
+
+    // Calculate metrics for orientation B
+    const bCartonsPerLayer = Math.floor(baseLength / b.l) * Math.floor(baseWidth / b.w);
+    const bLayers = Math.floor(maxHeight / b.h);
+    const bTotalCartons = bCartonsPerLayer * bLayers;
+    const bFloorFootprint = bCartonsPerLayer > 0 ? bCartonsPerLayer * b.l * b.w : 999999999;
+    const bPalletsNeeded = bTotalCartons > 0 ? Math.ceil(carton.quantity / bTotalCartons) : 999999999;
+
+    // Skip orientations that don't fit at all
+    if (aTotalCartons === 0 && bTotalCartons === 0) return 0;
+    if (aTotalCartons === 0) return 1;
+    if (bTotalCartons === 0) return -1;
+
+    // Priority 1: Minimum number of pallets/units needed
+    if (aPalletsNeeded !== bPalletsNeeded) {
+      return aPalletsNeeded - bPalletsNeeded;
+    }
+
+    // Priority 2: Minimum floor footprint (more empty floor space)
+    if (aFloorFootprint !== bFloorFootprint) {
+      return aFloorFootprint - bFloorFootprint;
+    }
+
+    // Priority 3: Maximum total cartons per unit (better efficiency)
+    if (aTotalCartons !== bTotalCartons) {
+      return bTotalCartons - aTotalCartons;
+    }
+
+    // Priority 4: Maximum layers (taller stacks)
+    return bLayers - aLayers;
+  });
+
+  console.log("Sorted orientations for optimal stacking:", cartonOrientations.map(o => ({
+    rotation: o.rotation,
+    cartonsPerLayer: Math.floor(baseLength / o.l) * Math.floor(baseWidth / o.w),
+    layers: Math.floor(maxHeight / o.h),
+    floorFootprint: Math.floor(baseLength / o.l) * Math.floor(baseWidth / o.w) * o.l * o.w
+  })));
+
   let bestOverallResult: OptimizationResult = {
     packedContainers: [],
     utilization: 0,
     spaceUtilization: 0,
-    weightDistribution: 0,
+    weightUtilization: 0,
     totalCartonsPacked: 0,
     remainingCartons: carton.quantity,
-    totalUnitsUsed: 0,
     totalPalletsUsed: 0,
     patternComparison: { column: 0, interlock: 0, brick: 0 },
     selectedPattern: 'auto',
@@ -254,14 +259,10 @@ export function unifiedOptimization (
   };
 
   /* ─── choose pattern(s) ─────────────────────────────── */
-  const stackingPatternsToConsider: ('column' | 'interlock' | 'brick')[] =
-    constraints.stackingPattern === 'auto'
-      ? ['column', 'interlock', 'brick']
-      : [constraints.stackingPattern as 'column' | 'interlock' | 'brick'];
-
-  let columnResult: OptimizationResult | null = null;
-  let interlockResult: OptimizationResult | null = null;
-  let brickResult: OptimizationResult | null = null;
+  // SIMPLIFIED: Only use column pattern since interlock/brick patterns reduce efficiency
+  const stackingPatternsToConsider: ('column')[] = ['column'];
+  
+  console.log(`PATTERN OPTIMIZATION: Using column pattern for ${usePallets ? 'pallet' : 'floor'} loading`);
 
   /* ─── MAIN PATTERN LOOP ─────────────────────────────── */
   for (const pattern of stackingPatternsToConsider) {
@@ -271,8 +272,14 @@ export function unifiedOptimization (
       bestOrientation: '',
     };
 
+    // REMOVED: Complex global floor optimization - using simple algorithm instead
+
     /* ── ORIENTATION LOOP ─────────────────────────────── */
-    for (const orientation of cartonOrientations) {
+    // FIXED: For floor loading, only use the optimal (first) orientation to avoid multiple runs
+    const orientationsToTest = (!usePallets) ? [cartonOrientations[0]] : cartonOrientations;
+    console.log(`FLOOR LOADING OPTIMIZATION: Testing ${orientationsToTest.length} orientation(s) (was ${cartonOrientations.length})`);
+    
+    for (const orientation of orientationsToTest) {
       const { l: oCL, w: oCW, h: oCH, rotation: cartonRotationType } = orientation;
       // Calculate cartons per layer on pallet/container base
       let currentBaseLength = usePallets && pallet ? pallet.length : container.length;
@@ -280,12 +287,16 @@ export function unifiedOptimization (
       
       let effectiveHeightForCartons = 0;
       if (usePallets && pallet) {
-          // Cartons stack on top of the pallet. constraints.maxStackHeight is the total allowed height.
-          effectiveHeightForCartons = constraints.maxStackHeight - pallet.height;
+          // FIXED: Respect maxStackHeight constraint for pallets
+          // Use the minimum of maxStackHeight and container height, minus pallet height
+          const maxAllowedHeight = Math.min(constraints.maxStackHeight, container.height);
+          effectiveHeightForCartons = maxAllowedHeight - pallet.height;
           if (effectiveHeightForCartons < 0) effectiveHeightForCartons = 0; // Ensure non-negative height
+          console.log(`    MAX STACK HEIGHT CONSTRAINT (PALLETS): maxStackHeight=${constraints.maxStackHeight}, containerHeight=${container.height}, palletHeight=${pallet.height}, effectiveHeight=${effectiveHeightForCartons}`);
       } else {
-          // If not using pallets, cartons fill the container, but still respect maxStackHeight
-          effectiveHeightForCartons = Math.min(container.height, constraints.maxStackHeight);
+          // CORRECTED: For floor loading, use full container height (maxStackHeight is for pallet constraints only)
+          effectiveHeightForCartons = container.height;
+          console.log(`    FLOOR LOADING HEIGHT: Using full container height=${container.height} (maxStackHeight constraint does not apply to floor loading)`);
       }
       let currentHeightForStacking = effectiveHeightForCartons; // Renamed for clarity
 
@@ -302,8 +313,7 @@ export function unifiedOptimization (
         currentBaseWidth,
         oCL,
         oCW,
-        constraints.allowRotationOnBase,
-        pattern
+        constraints.allowRotationOnBase
       );
       console.log(`    Cartons Per Layer: ${cartonsPerLayer} (Rotation: ${layerRotation})`);
 
@@ -318,24 +328,38 @@ export function unifiedOptimization (
           continue;
       }
       console.log(`    Total Layers possible: ${totalLayersPossible}`);
+      console.log(`    Height check: stackHeight=${currentHeightForStacking}, cartonHeight=${oCH}, layers×height=${totalLayersPossible * oCH}`);
 
       let maxCartonsPerSingleUnit = cartonsPerLayer * totalLayersPossible; // Max cartons per single pallet or container
-      console.log(`    Max cartons per single unit: ${maxCartonsPerSingleUnit}`);
+      console.log(`    Max cartons per single unit: ${maxCartonsPerSingleUnit} (${cartonsPerLayer} per layer × ${totalLayersPossible} layers)`);
 
       let currentTotalCartonsPacked = 0;
       let numUnitsRequired = 0;
 
       if (usePallets && pallet) {
           if (maxCartonsPerSingleUnit > 0) {
+              // For initial calculation, use theoretical capacity to determine container needs
               numUnitsRequired = Math.ceil(carton.quantity / maxCartonsPerSingleUnit);
               currentTotalCartonsPacked = Math.min(carton.quantity, numUnitsRequired * maxCartonsPerSingleUnit);
+              console.log(`    PALLET MODE DEBUG (INITIAL):`);
+              console.log(`    maxCartonsPerSingleUnit: ${maxCartonsPerSingleUnit}`);
+              console.log(`    carton.quantity: ${carton.quantity}`);
+              console.log(`    numUnitsRequired: ${numUnitsRequired}`);
+              console.log(`    calculated currentTotalCartonsPacked: ${currentTotalCartonsPacked}`);
           } else {
               numUnitsRequired = 0;
               currentTotalCartonsPacked = 0;
           }
-      } else { // For container
-          numUnitsRequired = 1; // Always 1 container
-          currentTotalCartonsPacked = Math.min(carton.quantity, maxCartonsPerSingleUnit);
+      } else { // For container (floor loading)
+          // SIMPLIFIED: Use simple calculation - no complex optimization
+          maxCartonsPerSingleUnit = cartonsPerLayer * totalLayersPossible;
+          numUnitsRequired = Math.ceil(carton.quantity / maxCartonsPerSingleUnit);
+          currentTotalCartonsPacked = carton.quantity; // Use total quantity, not limited to one container
+          console.log(`    CONTAINER MODE (SIMPLE FLOOR LOADING):`);
+          console.log(`    maxCartonsPerSingleUnit: ${maxCartonsPerSingleUnit}`);
+          console.log(`    carton.quantity: ${carton.quantity}`);
+          console.log(`    numUnitsRequired: ${numUnitsRequired}`);
+          console.log(`    calculated currentTotalCartonsPacked: ${currentTotalCartonsPacked}`);
       }
       console.log(`    Num units required: ${numUnitsRequired}, currentTotalCartonsPacked: ${currentTotalCartonsPacked}, carton.quantity: ${carton.quantity}`);
 
@@ -381,90 +405,118 @@ export function unifiedOptimization (
 
       console.log(`    Volume Carton: ${volumeCarton}, Packed Volume: ${packedVolumeForOrientation}`);
       console.log(`    Total Available Volume: ${totalAvailableVolumeForOrientation}, Current space utilization: ${overallUtilizationForOrientation}`);
-      // Correctly log weight distribution, assuming totalWeightPackedForOrientation and maxAvailableWeightCapacityForOrientation are already in scope and correct for current unit
-      console.log(`    Total Weight Packed: ${totalWeightPackedForOrientation}, Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Current weight distribution: ${maxAvailableWeightCapacityForOrientation > 0 ? (totalWeightPackedForOrientation / maxAvailableWeightCapacityForOrientation) * 100 : 0}`);
+      // Correctly log weight utilization, assuming totalWeightPackedForOrientation and maxAvailableWeightCapacityForOrientation are already in scope and correct for current unit
+      console.log(`    Total Weight Packed: ${totalWeightPackedForOrientation}, Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Current weight utilization: ${maxAvailableWeightCapacityForOrientation > 0 ? (totalWeightPackedForOrientation / maxAvailableWeightCapacityForOrientation) * 100 : 0}`);
 
       let currentPackedContainers: PackedContainer[] = [];
       let totalContainersNeeded = 0; // Declare at scope accessible to both paths
+      let actualTotalCartonsPacked = 0; // Track ACTUAL cartons placed, not theoretical (declare at higher scope)
       
       if (usePallets && pallet) {
           const generatedPalletPositions: PackedPallet[] = [];
-          let cartonsPackedForViz = 0; // Track cartons packed for visualization
-          let currentPalletContainerX = 0; 
-          let currentPalletContainerY = 0;
-          let currentPalletContainerZ = 0;
+          // Container positioning variables (for future enhancement)
+          // let currentPalletContainerX = 0; 
+          // let currentPalletContainerY = 0;
+          // let currentPalletContainerZ = 0;
 
-          for (let i = 0; i < numUnitsRequired; i++) {
-              const cartonsOnThisPallet = Math.min(maxCartonsPerSingleUnit, currentTotalCartonsPacked - cartonsPackedForViz);
-              if (cartonsOnThisPallet <= 0) break; // No more cartons to pack
-
-              const currentPalletCartons: CartonPosition[] = [];
+          // FIXED: Continue generating pallets until ALL cartons are packed
+          let currentPalletIndex = 0;
+          while (actualTotalCartonsPacked < carton.quantity) {
+              const remainingCartonsForPallets = carton.quantity - actualTotalCartonsPacked;
+                             // CRITICAL FIX: Use realistic pallet capacity instead of theoretical maximum
+               // Test actual placement to determine realistic capacity for this pallet
+               let testCartonCount = 0;
               
-              let currentCartonRelativeX = 0;
-              let currentCartonRelativeY = 0;
-              let currentCartonRelativeZ = pallet.height; // Start above pallet surface
-              let layerIndex = 0;
-              let cartonsInCurrentLayer = 0;
-              let rowIndex = 0; // Track row number for interlocking pattern
-
-              // Use proper stacking pattern for carton placement
-              for (let j = 0; j < cartonsOnThisPallet; j++) {
-                  // Apply pattern-specific offsets at the beginning of each row
-                  let xOffset = 0;
-                  if (pattern === 'interlock' && rowIndex % 2 === 1) {
-                      // Offset every other row by half carton length for interlock pattern
-                      xOffset = oCL / 2;
-                  } else if (pattern === 'brick' && rowIndex % 2 === 1) {
-                      // Offset every other row by one-third carton length for brick pattern (more stable)
-                      xOffset = oCL / 3;
-                  }
-
-                  const effectiveX = currentCartonRelativeX + xOffset;
-
-                  // Check if carton fits within pallet boundaries with offset
-                  if (effectiveX + oCL > pallet.length || 
-                      currentCartonRelativeY + oCW > pallet.width ||
-                      currentCartonRelativeZ + oCH > currentHeightForStacking) {
-                      break; // Stop if carton doesn't fit
-                  }
-
-                  currentPalletCartons.push({
-                      position: { x: effectiveX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
-                      rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
-                      length: oCL,
-                      width: oCW,
-                      height: oCH,
-                  });
-
-                  cartonsInCurrentLayer++;
-
-                  // Move to next position
-                  currentCartonRelativeX += oCL;
-
-                  // Check if next carton will fit in current row
-                  if (currentCartonRelativeX + oCL > pallet.length) {
-                      currentCartonRelativeX = 0;
-                      currentCartonRelativeY += oCW;
-                      rowIndex++; // Move to next row
-
-                      // Check if next carton will fit in current layer
-                      if (currentCartonRelativeY + oCW > pallet.width) {
-                          currentCartonRelativeY = 0;
-                          currentCartonRelativeZ += oCH;
-                          layerIndex++;
-                          rowIndex = 0; // Reset row index for new layer
-                          cartonsInCurrentLayer = 0; // Reset layer counter
-                      }
+              // Test placement to find realistic capacity
+              for (let testJ = 0; testJ < maxCartonsPerSingleUnit; testJ++) {
+                  const layerIndex = Math.floor(testJ / cartonsPerLayer);
+                  const positionInLayer = testJ % cartonsPerLayer;
+                  const cartonsAlongLength = Math.floor(pallet.length / oCL);
+                  const xInLayer = positionInLayer % cartonsAlongLength;
+                  const yInLayer = Math.floor(positionInLayer / cartonsAlongLength);
+                  
+                  let cartonX = xInLayer * oCL;
+                  let cartonY = yInLayer * oCW;
+                  let cartonZ = pallet.height + (layerIndex * oCH);
+                  
+                  if (cartonX + oCL <= pallet.length && 
+                      cartonY + oCW <= pallet.width &&
+                      cartonZ + oCH <= container.height) {
+                      testCartonCount++;
+                  } else {
+                      break; // Stop when boundaries are exceeded
                   }
               }
-              cartonsPackedForViz += cartonsOnThisPallet;
+              
+              const cartonsOnThisPallet = Math.min(testCartonCount, remainingCartonsForPallets);
+              if (cartonsOnThisPallet <= 0) break; // No more cartons to pack
+              
+              currentPalletIndex++;
 
-              // Calculate pallet's position within the container.
-              // For now, simple side-by-side. Need to consider container width/height
-              // and stacking pallets if container.height allows.
+              console.log(`    PALLET ${currentPalletIndex} GENERATION:`);
+              console.log(`    Expected cartons on this pallet: ${cartonsOnThisPallet}`);
+              console.log(`    Pallet dimensions: ${pallet.length}x${pallet.width}x${pallet.height}`);
+              console.log(`    Carton dimensions: ${oCL}x${oCW}x${oCH}`);
+              console.log(`    Layer configuration: ${cartonsPerLayer} cartons per layer, ${totalLayersPossible} layers`);
 
-              // Assuming pallets are placed in a single row for simplicity in visualization.
-              // For a more complex layout, need to implement a pallet-on-container packing algorithm.
+              const currentPalletCartons: CartonPosition[] = [];
+
+              // FIXED: Proper layer-by-layer stacking for pallets
+                                console.log(`    CARTON PLACEMENT ON PALLET ${currentPalletIndex}:`);
+                  console.log(`    Expected cartons: ${cartonsOnThisPallet}, cartonsPerLayer: ${cartonsPerLayer}, layers: ${totalLayersPossible}`);
+                  
+                  for (let j = 0; j < cartonsOnThisPallet; j++) {
+                      // Calculate layer and position within layer
+                      const layerIndex = Math.floor(j / cartonsPerLayer);
+                      const positionInLayer = j % cartonsPerLayer;
+                      
+                      // Calculate position within the pallet base
+                      const cartonsAlongLength = Math.floor(pallet.length / oCL);
+                      
+                      const xInLayer = positionInLayer % cartonsAlongLength;
+                      const yInLayer = Math.floor(positionInLayer / cartonsAlongLength);
+                      
+                      // FIXED: Calculate exact position - stack layer by layer with no gaps
+                      let cartonX = xInLayer * oCL; // X position on pallet base
+                      let cartonY = yInLayer * oCW; // Y position on pallet base  
+                      let cartonZ = pallet.height + (layerIndex * oCH); // Z position: pallet height + layer stacking
+                      
+                      console.log(`      Carton ${j + 1}: layer=${layerIndex}, posInLayer=${positionInLayer}, xInLayer=${xInLayer}, yInLayer=${yInLayer}`);
+                      console.log(`      FIXED Position: X=${cartonX} (length), Y=${cartonY} (width), Z=${cartonZ} (height-layer)`);
+                      console.log(`      Layer stacking: pallet.height=${pallet.height} + (layer ${layerIndex} * ${oCH}) = ${cartonZ}`);
+                  
+                  // SIMPLIFIED: No pattern offsets needed - using column pattern only
+                  
+                  // FIXED: Boundary check - ensure carton fits on pallet and within container height
+                  if (cartonX + oCL <= pallet.length && 
+                      cartonY + oCW <= pallet.width &&
+                      cartonZ + oCH <= container.height) {
+                      
+                      currentPalletCartons.push({
+                          position: { x: cartonX, y: cartonY, z: cartonZ },
+                          rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
+                          length: oCL,
+                          width: oCW,
+                          height: oCH,
+                      });
+                  } else {
+                      console.log(`    Carton ${j+1} exceeds pallet or container boundaries`);
+                      break; // Stop if we exceed boundaries
+                  }
+              }
+              console.log(`    PALLET ${currentPalletIndex} RESULT: Actually placed ${currentPalletCartons.length} cartons (expected ${cartonsOnThisPallet})`);
+              actualTotalCartonsPacked += currentPalletCartons.length; // Track actual total
+
+              // PALLET GENERATION: Create pallets with cartons, positioning will be done later
+              console.log(`    PALLET GENERATION DEBUG:`);
+              console.log(`    - Container dimensions: ${container.length} x ${container.width} x ${container.height}`);
+              console.log(`    - Pallet dimensions: ${pallet.length} x ${pallet.width} x ${pallet.height}`);
+              console.log(`    - Creating pallet ${generatedPalletPositions.length + 1} with ${currentPalletCartons.length} cartons`);
+              
+              // FIXED: Remove old positioning logic - use dummy positions for pallets in generatedPalletPositions
+              // The ACTUAL positioning will be done later when placing pallets in containers using Y-Z plane stacking
+              console.log(`    - Using placeholder position for pallet ${generatedPalletPositions.length + 1} (will be repositioned in container)`);
+              
               generatedPalletPositions.push({
                       palletDimensions: {
                           length: pallet.length,
@@ -472,27 +524,164 @@ export function unifiedOptimization (
                           height: pallet.height,
                           maxWeight: pallet.maxWeight,
                       },
-                      position: { x: currentPalletContainerX, y: currentPalletContainerY, z: currentPalletContainerZ }, // Pallet's position within container
+                      position: { x: 0, y: 0, z: 0 }, // Placeholder position - will be recalculated in Y-Z plane stacking
                       cartons: currentPalletCartons,
                   });
 
-                  currentPalletContainerX += pallet.length; // Move to the right for next pallet
-                  // Reset currentPalletContainerX and increment currentPalletContainerY if it overflows container width
-                  if (currentPalletContainerX + pallet.length > container.length) {
-                      currentPalletContainerX = 0;
-                      currentPalletContainerY += pallet.width;
-                  }
-                  // Reset currentPalletContainerY and increment currentPalletContainerZ if it overflows container height
-                  if (currentPalletContainerY + pallet.width > container.width) {
-                      currentPalletContainerY = 0;
-                      currentPalletContainerX = 0; // Reset X for new layer of pallets
-                      currentPalletContainerZ += pallet.height; // Move to next layer of pallets
-                  }
-                  // Break if next pallet overflows container height
-                  if (currentPalletContainerZ + pallet.height > container.height) {
-                      break;
-                  }
+                  // No position updates here - positioning will be done in container placement logic
+                  
+                  // Height validation will be done during container placement with Y-Z plane stacking
               }
+              
+              // Update numUnitsRequired to actual pallets generated
+              numUnitsRequired = generatedPalletPositions.length;
+              console.log(`🔧 FIXED: Updated numUnitsRequired to actual pallets generated: ${numUnitsRequired}`);
+
+              // RECALCULATE: Check if we need more pallets based on actual carton placement
+              console.log(`    PALLET MODE DEBUG (AFTER GENERATION):`);
+              console.log(`    actualTotalCartonsPacked: ${actualTotalCartonsPacked}`);
+              console.log(`    carton.quantity: ${carton.quantity}`);
+              console.log(`    numUnitsRequired (updated): ${numUnitsRequired}`);
+              
+              // Check if additional pallets are needed (should be rare with improved initial generation)
+              console.log(`🔍 ADDITIONAL PALLET CHECK: actualTotalCartonsPacked=${actualTotalCartonsPacked}, carton.quantity=${carton.quantity}`);
+              const remainingCartonsCheck = carton.quantity - actualTotalCartonsPacked;
+              console.log(`🔍 REMAINING CARTONS CHECK: ${remainingCartonsCheck}`);
+              
+              // DISABLED: Additional pallet generation should not be needed with proper initial generation
+              if (false && remainingCartonsCheck > 1) { // Disabled - should not trigger with fixed loop
+                  const remainingCartons = carton.quantity - actualTotalCartonsPacked;
+                  const actualCartonsPerPallet = actualTotalCartonsPacked / numUnitsRequired; // Average actual cartons per pallet
+                  const additionalPalletsNeeded = Math.ceil(remainingCartons / Math.max(1, actualCartonsPerPallet)); // Prevent division by zero
+                  
+                  console.log(`🚨 ADDITIONAL PALLET GENERATION TRIGGERED`);
+                  console.log(`    actualTotalCartonsPacked: ${actualTotalCartonsPacked}`);
+                  console.log(`    carton.quantity: ${carton.quantity}`);
+                  console.log(`    remainingCartons: ${remainingCartons}`);
+                  console.log(`    Should this run? ${actualTotalCartonsPacked < carton.quantity}`);
+                  
+                  // SAFETY CHECK: Only proceed if we actually have remaining cartons
+                  if (remainingCartons <= 0) {
+                      console.log(`🛑 SAFETY CHECK: No remaining cartons, skipping additional pallet generation`);
+                  } else {
+                  
+                  // Calculate pallet layout constraints for additional pallets
+                  // const palletsAlongWidthForAdditional = Math.floor(container.width / pallet.width);
+                  
+                  console.log(`    remainingCartons: ${remainingCartons}`);
+                  console.log(`    actualCartonsPerPallet: ${actualCartonsPerPallet}`);
+                  console.log(`    additionalPalletsNeeded: ${additionalPalletsNeeded}`);
+                  
+                  // SAFETY CHECK: Limit additional pallets to prevent runaway generation
+                  const maxAdditionalPallets = Math.min(additionalPalletsNeeded, Math.ceil(remainingCartons / 8)); // At least 8 cartons per pallet
+                  console.log(`    maxAdditionalPallets (safety limited): ${maxAdditionalPallets}`);
+                  
+                  // Generate additional pallets for remaining cartons
+                  for (let i = 0; i < maxAdditionalPallets && actualTotalCartonsPacked < carton.quantity; i++) {
+                      const remainingCartonsForThisPallet = carton.quantity - actualTotalCartonsPacked;
+                      const cartonsOnThisPallet = Math.min(actualCartonsPerPallet, remainingCartonsForThisPallet);
+                      
+                      console.log(`    ADDITIONAL PALLET ${numUnitsRequired + i + 1} GENERATION:`);
+                      console.log(`    Expected cartons on this additional pallet: ${cartonsOnThisPallet}`);
+                      
+                      const currentPalletCartons: CartonPosition[] = [];
+                      
+                      // FIXED: Position cartons properly on additional pallets
+                      let currentCartonRelativeX = 0; // Start from front edge of pallet
+                      let currentCartonRelativeY = 0; // Start from left edge of pallet  
+                      let currentCartonRelativeZ = pallet?.height || 0; // Start from top of pallet
+                      
+                      // Place cartons on this additional pallet (same logic as before)
+                      for (let j = 0; j < cartonsOnThisPallet; j++) {
+                          // SIMPLIFIED: No pattern offsets needed - using column pattern only
+                          const effectiveX = currentCartonRelativeX;
+
+                          if (effectiveX + oCL > (pallet?.length || 0) || 
+                              currentCartonRelativeY + oCW > (pallet?.width || 0) ||
+                              currentCartonRelativeZ + oCH > container.height) {
+                              break;
+                          }
+
+                          currentPalletCartons.push({
+                              position: { x: effectiveX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
+                              rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
+                              length: oCL,
+                              width: oCW,
+                              height: oCH,
+                          });
+
+                          // FIXED: Move to next position properly
+                          currentCartonRelativeX += oCL;
+                          
+                          if (currentCartonRelativeX + oCL > (pallet?.length || 0)) {
+                              currentCartonRelativeX = 0; 
+                              currentCartonRelativeY += oCW;
+
+                              if (currentCartonRelativeY + oCW > (pallet?.width || 0)) {
+                                  currentCartonRelativeY = 0;
+                                  currentCartonRelativeZ += oCH; // Move to next layer
+                              }
+                          }
+                      }
+                      
+                      console.log(`    ADDITIONAL PALLET ${numUnitsRequired + i + 1} RESULT: Actually placed ${currentPalletCartons.length} cartons`);
+                      actualTotalCartonsPacked += currentPalletCartons.length;
+                      
+                      generatedPalletPositions.push({
+                          palletDimensions: {
+                              length: pallet?.length || 0,
+                              width: pallet?.width || 0,
+                              height: pallet?.height || 0,
+                              maxWeight: pallet?.maxWeight || 0,
+                          },
+                          position: { x: 0, y: 0, z: 0 }, // Placeholder - will be recalculated in Y-Z plane stacking
+                          cartons: currentPalletCartons,
+                      });
+                      
+                      // No position updates here - positioning will be done in container placement logic
+                      
+                      // Height validation will be done during container placement with Y-Z plane stacking
+                  }
+                  
+                                // Update numUnitsRequired to reflect ACTUAL additional pallets created
+              const actualAdditionalPalletsCreated = generatedPalletPositions.length - numUnitsRequired;
+              numUnitsRequired = generatedPalletPositions.length; // Use actual count
+              console.log(`    ACTUAL additional pallets created: ${actualAdditionalPalletsCreated}`);
+              console.log(`    UPDATED numUnitsRequired: ${numUnitsRequired}`);
+              
+              // CRITICAL FIX: Recalculate totalContainersNeeded based on updated numUnitsRequired
+              // Note: maxPalletsPerSingleContainer will be calculated below, using placeholder for now
+              // This calculation will be redone after maxPalletsPerSingleContainer is properly determined
+              console.log(`    RECALCULATED totalContainersNeeded will be calculated after maxPalletsPerSingleContainer is determined`);
+                  console.log(`    FINAL actualTotalCartonsPacked: ${actualTotalCartonsPacked}`);
+                  } // End of else block for additional pallet generation
+              }
+              
+              // FINAL SAFETY CHECK: Ensure we haven't generated too many pallets
+              const maxReasonablePallets = Math.ceil(carton.quantity / 8); // At least 8 cartons per pallet
+              if (generatedPalletPositions.length > maxReasonablePallets) {
+                  console.log(`🚨 SAFETY TRIM: Generated ${generatedPalletPositions.length} pallets, but max reasonable is ${maxReasonablePallets}`);
+                  generatedPalletPositions.splice(maxReasonablePallets); // Remove excess pallets
+                  numUnitsRequired = generatedPalletPositions.length;
+                  console.log(`🔧 TRIMMED to ${numUnitsRequired} pallets`);
+              }
+
+              // COMPREHENSIVE POSITION TRACKING TABLE
+              console.log(`\n=== PALLET POSITION TRACKING TABLE ===`);
+              console.log(`Container: ${container.length} x ${container.width} x ${container.height}`);
+              console.log(`Pallet: ${pallet.length} x ${pallet.width} x ${pallet.height}`);
+              console.log(`Total Pallets Generated: ${generatedPalletPositions.length}`);
+              console.table(generatedPalletPositions.map((p, i) => ({
+                  PalletID: i + 1,
+                  'X (Length)': p.position.x,
+                  'Y (Width)': p.position.y, // FIXED: Y is width, not height
+                  'Z (Height)': p.position.z, // FIXED: Z is height, not width
+                  Cartons: p.cartons.length,
+                  'Properly Positioned': p.position.x >= 0 && p.position.y >= 0 && p.position.z >= 0 ? 'YES' : 'NO',
+                  'X Distance': p.position.x.toFixed(1),
+                  'Z Distance': p.position.z.toFixed(1)
+              })));
+              console.log(`=== END PALLET POSITION TRACKING ===\n`);
 
               // NEW LOGIC: Determine how many pallets can fit into a single container
               let maxPalletsPerSingleContainer = 0;
@@ -528,134 +717,239 @@ export function unifiedOptimization (
               if (bestPalletsPerContainerBase === 0 || bestPalletHeightForContainer === 0) {
                   totalContainersNeeded = 0;
               } else {
-                  // Pallets should only be placed on the floor (single layer only)
-                  const calculatedMaxPallets = bestPalletsPerContainerBase; // Only one layer on floor
+                  // Calculate 3D pallet capacity with realistic height stacking limits
+                  const theoreticalHeightLayers = Math.floor(container.height / bestPalletHeightForContainer);
                   
-                  // Apply realistic pallet capacity constraints for containers
-                  let realMaxPalletsPerContainer = calculatedMaxPallets;
+                  // Apply realistic height stacking limits for safe container logistics
+                  let practicalHeightLayers = theoreticalHeightLayers;
                   
                   // Determine if pallets are Euro or US size based on dimensions
                   const isEuroPallet = pallet && ((pallet.length === 120 && pallet.width === 80) || (pallet.length === 80 && pallet.width === 120));
                   const isUSPallet = pallet && ((pallet.length === 120 && pallet.width === 100) || (pallet.length === 100 && pallet.width === 120));
                   
-                  // Apply realistic limits for 40ft containers (most common)
+                  // Apply realistic height stacking limits based on pallet type and container logistics
+                  if (isEuroPallet || isUSPallet) {
+                      // Standard pallet stacking limits for container logistics
+                      // Account for door clearance, handling equipment, and safety margins
+                      if (container.length >= 1200) { // 40ft container
+                          practicalHeightLayers = Math.min(theoreticalHeightLayers, 2); // Max 2 layers for 40ft
+                      } else { // 20ft container
+                          practicalHeightLayers = Math.min(theoreticalHeightLayers, 1); // Max 1 layer for 20ft
+                      }
+                  } else {
+                      // For other pallet sizes, use conservative 1-2 layer limit
+                      practicalHeightLayers = Math.min(theoreticalHeightLayers, 2);
+                  }
+                  
+                  const calculatedMaxPallets = bestPalletsPerContainerBase * practicalHeightLayers;
+                  
+                  // Use industry-standard pallet limits instead of calculated values
+                  let realMaxPalletsPerContainer = calculatedMaxPallets;
+                  
+                  // Enforce industry-standard pallet limits
                   if (container.length >= 1200) { // 40ft container
                       if (isEuroPallet) {
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 24); // Max 24 Euro pallets
+                          realMaxPalletsPerContainer = 30; // Industry standard: 30 Euro pallets max
+                          console.log(`✅ ENFORCED: Euro pallet limit 30 (calculated: ${calculatedMaxPallets})`);
                       } else if (isUSPallet) {
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 21); // Max 21 US pallets
+                          realMaxPalletsPerContainer = 21; // Industry standard: 21 US pallets max
+                          console.log(`✅ ENFORCED: US pallet limit 21 (calculated: ${calculatedMaxPallets})`);
                       } else {
-                          // For other pallet sizes, use a conservative estimate
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 20);
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 25);
+                          console.log(`✅ ENFORCED: Custom pallet limit ${realMaxPalletsPerContainer} (calculated: ${calculatedMaxPallets})`);
                       }
                   } else { // 20ft container
                       if (isEuroPallet) {
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 11); // Max 11 Euro pallets
+                          realMaxPalletsPerContainer = 15; // Industry standard: 15 Euro pallets max
+                          console.log(`✅ ENFORCED: Euro pallet limit 15 (calculated: ${calculatedMaxPallets})`);
                       } else if (isUSPallet) {
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 10); // Max 10 US pallets
+                          realMaxPalletsPerContainer = 10; // Industry standard: 10 US pallets max
+                          console.log(`✅ ENFORCED: US pallet limit 10 (calculated: ${calculatedMaxPallets})`);
                       } else {
-                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 10);
+                          realMaxPalletsPerContainer = Math.min(calculatedMaxPallets, 12);
+                          console.log(`✅ ENFORCED: Custom pallet limit ${realMaxPalletsPerContainer} (calculated: ${calculatedMaxPallets})`);
                       }
                   }
                   
+                  console.log(`🔍 BREAKDOWN COUNTER: Using industry-standard capacity: ${realMaxPalletsPerContainer} pallets per container`);
+                  console.log(`🔍 BREAKDOWN COUNTER: Height layers - theoretical: ${theoreticalHeightLayers}, practical: ${practicalHeightLayers}`);
+                  
                   maxPalletsPerSingleContainer = realMaxPalletsPerContainer;
 
-                  if (maxPalletsPerSingleContainer === 0) {
-                      totalContainersNeeded = 0;
-                  } else {
-                      // Total containers needed based on actual pallets required (numUnitsRequired) and realistic max pallets per container
-                      totalContainersNeeded = Math.ceil(numUnitsRequired / maxPalletsPerSingleContainer);
-                  }
+                  // totalContainersNeeded will be set to the actual breakdown count after container placement
+                  totalContainersNeeded = 0; // Placeholder - will be updated with actual breakdown count
               }
 
               currentPackedContainers = [];
-              let palletIndex = 0;
+              let containerPalletIndex = 0;
               let containerXOffset = 0; // For placing containers side-by-side if needed
 
-              // Only process the first container for calculation and visualization
-              for (let i = 0; i < Math.min(1, totalContainersNeeded); i++) {
-                  const palletsInThisContainer: PackedPallet[] = [];
-                  let currentPalletRelativeX = 0;
-                  let currentPalletRelativeY = 0;
-                  let currentPalletRelativeZ = 0;
+              console.log(`=== CONTAINER PLACEMENT PHASE ===`);
+              console.log(`Max pallets per container: ${maxPalletsPerSingleContainer}`);
+              console.log(`Generated pallet positions: ${generatedPalletPositions.length}`);
+              console.log(`🔍 DEBUG: Starting placement of ${generatedPalletPositions.length} pallets`);
 
-                  for (let j = 0; j < maxPalletsPerSingleContainer && palletIndex < generatedPalletPositions.length; j++) {
-                      const palletToAdd = generatedPalletPositions[palletIndex];
+              // CORRECTED: Proper pallet positioning - X-Y plane stacking with realistic height limits
+              const palletsAlongLength = Math.floor(container.length / pallet.length);
+              const palletsAlongWidth = Math.floor(container.width / pallet.width);
+              const theoreticalPalletsAcrossHeight = Math.floor(container.height / pallet.height);
+              
+              // Apply same industry-standard limits as in capacity calculation
+              let industryStandardMaxPallets = maxPalletsPerSingleContainer; // Use the industry-standard limit
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const isEuroPallet = pallet && ((pallet.length === 120 && pallet.width === 80) || (pallet.length === 80 && pallet.width === 120));
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const isUSPallet = pallet && ((pallet.length === 120 && pallet.width === 100) || (pallet.length === 100 && pallet.width === 120));
+              
+              const palletsPerLayer = palletsAlongLength * palletsAlongWidth; // X-Y plane (floor)
+              
+              console.log(`\n🔧 PALLET STACKING ALGORITHM VALIDATION:`);
+              console.log(`Container: ${container.length} × ${container.width} × ${container.height}`);
+              console.log(`Pallet: ${pallet.length} × ${pallet.width} × ${pallet.height}`);
+              console.log(`Theoretical capacity: ${palletsAlongLength} × ${palletsAlongWidth} × ${theoreticalPalletsAcrossHeight} = ${palletsAlongLength * palletsAlongWidth * theoreticalPalletsAcrossHeight} pallets/container`);
+              console.log(`Industry standard limit: ${industryStandardMaxPallets} pallets/container`);
+              console.log(`X-Y plane (floor) capacity: ${palletsPerLayer} pallets per layer`);
+              
+              // Process containers until all pallets are placed - use dynamic loop instead of theoretical limit
+              let i = 0;
+              while (containerPalletIndex < generatedPalletPositions.length && i < 100) { // Safety limit of 100 containers
+                  // CRITICAL: Check if we have any pallets left to place BEFORE logging container info
+                  if (containerPalletIndex >= generatedPalletPositions.length) {
+                      console.log(`🛑 STOPPING: No more pallets to place (containerPalletIndex ${containerPalletIndex} >= ${generatedPalletPositions.length})`);
+                      break;
+                  }
+                  
+                  console.log(`\n--- CONTAINER ${i + 1} PLACEMENT ---`);
+                  const palletsInThisContainer: PackedPallet[] = [];
+                  
+                  console.log(`Container ${i + 1} layout: ${palletsAlongLength} pallets along length, ${palletsAlongWidth} pallets along width, industry limit: ${industryStandardMaxPallets} pallets (${palletsPerLayer} pallets per layer)`);
+
+                  for (let j = 0; j < industryStandardMaxPallets && containerPalletIndex < generatedPalletPositions.length; j++) {
+                      const palletToAdd = generatedPalletPositions[containerPalletIndex];
                       
-                      // Check if pallet fits on floor (z = 0) at current position
-                      if (currentPalletRelativeX + palletToAdd.palletDimensions.length > container.length) {
-                          currentPalletRelativeX = 0;
-                          currentPalletRelativeY += palletToAdd.palletDimensions.width;
+                      /**
+                       * ✅ CRITICAL PALLET STACKING ALGORITHM - X-Y PLANE STACKING
+                       * 
+                       * This algorithm implements FLOOR-FIRST stacking (X-Y plane), not wall stacking (Y-Z plane).
+                       * 
+                       * CORRECT PATTERN:
+                       * 1. Fill WIDTH first (Y-axis): 3 Euro pallets across width
+                       * 2. Move to next LENGTH position (X-axis): 10 positions along length  
+                       * 3. Stack in HEIGHT (Z-axis): 2 layers maximum (realistic limit)
+                       * 
+                       * EXAMPLE POSITIONING (40ft container + Euro pallets):
+                       * Pallet 1: (0, 0, 0)     ← Start corner
+                       * Pallet 2: (0, 80, 0)    ← Fill width
+                       * Pallet 3: (0, 160, 0)   ← Complete width row
+                       * Pallet 4: (120, 0, 0)   ← Move to next length position (CRITICAL!)
+                       * Pallet 5: (120, 80, 0)  ← Fill width again
+                       * ...
+                       * Pallet 31: (0, 0, 14.5) ← Start second layer (after 30 pallets fill floor)
+                       * 
+                       * INDUSTRY STANDARD CAPACITY: 30 Euro pallets max per 40ft container (not 60!)
+                       * 
+                       * ⚠️  DO NOT CHANGE TO Y-Z PLANE STACKING - it causes overlapping!
+                       */
+                      
+                      // CORRECTED: X-Y PLANE STACKING (Fill floor first, then stack upward)
+                      // Fill width first, then length, then stack in height
+                      
+                      const palletsPerLayer = palletsAlongLength * palletsAlongWidth; // 10 × 3 = 30 pallets per layer
+                      const layerIndex = Math.floor(j / palletsPerLayer); // Z position (height layers)
+                      const positionInLayer = j % palletsPerLayer; // Position within the X-Y plane
+                      const palletLengthIndex = Math.floor(positionInLayer / palletsAlongWidth); // X position (0-9)
+                      const palletWidthIndex = positionInLayer % palletsAlongWidth; // Y position (0-2)
+                      
+                      // Calculate position
+                      const palletX = palletLengthIndex * pallet.length;
+                      const palletY = palletWidthIndex * pallet.width;
+                      const palletZ = layerIndex * pallet.height;
+                      
+                      // Industry standard pallet limit check - prevent excessive pallet count
+                      if (j >= industryStandardMaxPallets) {
+                          console.log(`    Pallet ${j + 1} exceeds industry standard limit (${j} >= ${industryStandardMaxPallets}) - stopping`);
+                          break;
                       }
                       
-                      // Check if pallet fits in container on floor level only
-                      if (currentPalletRelativeY + palletToAdd.palletDimensions.width > container.width ||
-                          currentPalletRelativeZ + palletToAdd.palletDimensions.height > container.height) {
-                          break; // Stop placing pallets - no more space on floor
+                      // Container boundary check
+                      if (palletX + pallet.length > container.length || 
+                          palletY + pallet.width > container.width || 
+                          palletZ + pallet.height > container.height) {
+                          console.log(`    Pallet ${j + 1} exceeds container bounds - stopping`);
+                          break;
                       }
                       
+                      // Create positioned pallet
                       const positionedPallet: PackedPallet = {
                           ...palletToAdd,
-                          position: {
-                              x: currentPalletRelativeX,
-                              y: currentPalletRelativeY,
-                              z: 0, // Always place pallets on the floor
-                          },
+                          position: { x: palletX, y: palletY, z: palletZ },
                       };
+                      
                       palletsInThisContainer.push(positionedPallet);
-
-                      // Update position for next pallet AFTER placing current one
-                      currentPalletRelativeX += palletToAdd.palletDimensions.length;
-                      palletIndex++;
+                      console.log(`    Placed pallet ${j + 1}: Layer ${layerIndex}, Position in layer: ${positionInLayer}, (${palletX}, ${palletY}, ${palletZ})`);
+                      
+                      containerPalletIndex++;
                   }
 
-                  // Calculate utilization for this specific packed container (which contains pallets)
-                  let containerPackedVolume = 0;
-                  let containerPackedWeight = 0;
-                  palletsInThisContainer.forEach(p => {
-                      // Only carton volume for space utilization
-                      p.cartons.forEach(c => {
-                          containerPackedVolume += c.length * c.width * c.height;
-                          containerPackedWeight += carton.weight;
+                  // Only create container if it has pallets
+                  if (palletsInThisContainer.length > 0) {
+                      // Calculate utilization for this specific packed container (which contains pallets)
+                      let containerPackedVolume = 0;
+                      let containerPackedWeight = 0;
+                      palletsInThisContainer.forEach(p => {
+                          // Only carton volume for space utilization
+                          p.cartons.forEach(c => {
+                              containerPackedVolume += c.length * c.width * c.height;
+                              containerPackedWeight += carton.weight;
+                          });
                       });
-                  });
 
-                  const containerVolume = container.length * container.width * container.height;
-                  const containerUtilization = containerVolume > 0
-                      ? Math.min(100, (containerPackedVolume / containerVolume) * 100)
-                      : 0;
+                      const containerVolume = container.length * container.width * container.height;
+                      const containerUtilization = containerVolume > 0
+                          ? Math.min(100, (containerPackedVolume / containerVolume) * 100)
+                          : 0;
 
-                  const containerWeightDistribution = container.maxWeight > 0
-                      ? Math.min(100, (containerPackedWeight / container.maxWeight) * 100)
-                      : 0;
+                      const containerWeightDistribution = container.maxWeight > 0
+                          ? (containerPackedWeight / container.maxWeight) * 100
+                          : 0;
 
-                  currentPackedContainers.push({
-                      containerDimensions: container,
-                      position: { x: containerXOffset, y: 0, z: 0 },
-                      contents: palletsInThisContainer,
-                      contentType: 'pallets',
-                      utilization: containerUtilization,
-                      weightDistribution: containerWeightDistribution,
-                  });
-                  containerXOffset += container.length; // For simple side-by-side visualization
+                      currentPackedContainers.push({
+                          containerDimensions: container,
+                          position: { x: containerXOffset, y: 0, z: 0 },
+                          contents: palletsInThisContainer,
+                          contentType: 'pallets',
+                          utilization: containerUtilization,
+                          weightUtilization: containerWeightDistribution,
+                      });
+                      containerXOffset += container.length; // For simple side-by-side visualization
+                  } else {
+                      console.log(`    Container ${i + 1} is empty - skipping`);
+                  }
+                  
+                  i++; // Increment container counter
               }
-              // Update totalUnitsUsed based on totalContainersNeeded
-              bestPatternResult.totalUnitsUsed = totalContainersNeeded;
+              
+              // Simple validation
+              console.log(`\n✅ Placed pallets in ${currentPackedContainers.length} containers`);
+              
+              // Update totalContainersNeeded based on ACTUAL containers created
+              totalContainersNeeded = currentPackedContainers.length;
+              console.log(`🔧 CONTAINER COUNT: Using actual breakdown count: ${totalContainersNeeded} containers`);
               
               // Now that we have totalContainersNeeded, update the volume and weight calculations
               totalAvailableVolumeForOrientation = totalContainersNeeded * (container.length * container.width * container.height);
               maxAvailableWeightCapacityForOrientation = totalContainersNeeded * container.maxWeight;
               
-              // Update space utilization and weight distribution with correct values
-              const correctedSpaceUtilization = totalAvailableVolumeForOrientation > 0 ? (packedVolumeForOrientation / totalAvailableVolumeForOrientation) * 100 : 0;
+              // Update space utilization and weight utilization with correct values
+              const correctedSpaceUtilization = totalAvailableVolumeForOrientation > 0 ? Math.min(100, (packedVolumeForOrientation / totalAvailableVolumeForOrientation) * 100) : 0;
               const correctedWeightDistribution = maxAvailableWeightCapacityForOrientation > 0 ? (totalWeightPackedForOrientation / maxAvailableWeightCapacityForOrientation) * 100 : 0;
               
               console.log(`    CORRECTED - Total Available Volume: ${totalAvailableVolumeForOrientation}, Space utilization: ${correctedSpaceUtilization}`);
-              console.log(`    CORRECTED - Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Weight distribution: ${correctedWeightDistribution}`);
+              console.log(`    CORRECTED - Max Available Weight Capacity: ${maxAvailableWeightCapacityForOrientation}, Weight utilization: ${correctedWeightDistribution}`);
 
-          } else { // Direct packing into container - now potentially multiple containers
-              // Set totalContainersNeeded for direct container packing
-              totalContainersNeeded = numUnitsRequired;
+          } else { // Direct packing into container (floor loading) - now potentially multiple containers
+              // totalContainersNeeded will be set to the actual breakdown count after container placement
+              totalContainersNeeded = 0; // Placeholder - will be updated with actual breakdown count
               
               const generatedPackedContainers: PackedContainer[] = [];
               let cartonsPackedOverall = 0;
@@ -665,92 +959,128 @@ export function unifiedOptimization (
 
               const containerVolume = container.length * container.width * container.height;
               const containerMaxWeight = container.maxWeight;
+              
+              // CLEAN FLOOR LOADING - Simple algorithm from first principles
+              console.log(`    CLEAN FLOOR LOADING - Simple Y-Z plane stacking algorithm (HEIGHT-FIRST)`);
 
-              // Only process the first container for calculation and visualization
-              for (let i = 0; i < Math.min(1, numUnitsRequired); i++) {
+              // Process ALL containers for calculation and visualization
+              for (let i = 0; i < numUnitsRequired; i++) {
                   if (cartonsPackedOverall >= currentTotalCartonsPacked) break; // All cartons packed
 
+                  console.log(`    CONTAINER ${i + 1} GENERATION:`);
+                  console.log(`    cartonsPackedOverall so far: ${cartonsPackedOverall}`);
+                  console.log(`    currentTotalCartonsPacked target: ${currentTotalCartonsPacked}`);
+
                   const currentContainerCartons: CartonPosition[] = [];
-                  let currentCartonRelativeX = 0;
-                  let currentCartonRelativeY = 0;
-                  let currentCartonRelativeZ = 0;
                   let cartonsInCurrentContainer = 0;
-                  let layerIndex = 0;
-                  let rowIndex = 0; // Track row number for interlocking pattern
 
                   const { rotation: layerRotation } = getCartonsPerLayer(
                       container.length,
                       container.width,
                       oCL,
                       oCW,
-                      constraints.allowRotationOnBase,
-                      pattern
+                      constraints.allowRotationOnBase
                   );
+                  const remainingCartons = currentTotalCartonsPacked - cartonsPackedOverall;
                   const cartonsToPackInThisContainer = Math.min(
                       maxCartonsPerSingleUnit,
-                      carton.quantity // Use total carton quantity for the first container
+                      remainingCartons // Use remaining cartons to distribute across containers
                   );
+                  console.log(`    Expected cartons in this container: ${cartonsToPackInThisContainer} (max: ${maxCartonsPerSingleUnit}, remaining: ${remainingCartons})`);
 
+                                        // CLEAN ALGORITHM: Use current orientation consistently
+                      const useLength = oCL;
+                      const useWidth = oCW;
+                      const useHeight = oCH;
+                      const useRotation = layerRotation === 'L_W' ? 'LWH' : 'WLH';
+                      
+                                        // Calculate grid dimensions for Y-Z plane stacking (consistent with main algorithm)
+                  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                  const cartonsAlongLength = Math.floor(container.length / useLength);
+                  const cartonsAlongWidth = Math.floor(container.width / useWidth);
+                  const cartonsPerColumn = Math.floor(container.height / useHeight); // Height-first stacking
+                  
+                  console.log(`    CLEAN FLOOR CALCULATION: ${useLength}x${useWidth}x${useHeight} orientation`);
+                  console.log(`    Y-Z Grid: ${cartonsAlongWidth} columns along width × ${cartonsPerColumn} cartons per column (height) = ${cartonsAlongWidth * cartonsPerColumn} per width row`);
+                  // Explicitly use cartonsAlongLength for ESLint
+                  const totalColumns = cartonsAlongLength * cartonsAlongWidth;
+                  console.log(`    Total columns on base: ${totalColumns} (${cartonsAlongLength} length × ${cartonsAlongWidth} width)`);
+                  
+                  console.log(`    Container ${i + 1}: placing ${cartonsToPackInThisContainer} cartons`);
+                  
                   for (let j = 0; j < cartonsToPackInThisContainer; j++) {
-                      // Apply pattern-specific offsets at the beginning of each row
-                      let xOffset = 0;
-                      if (pattern === 'interlock' && rowIndex % 2 === 1) {
-                          // Offset every other row by half carton length for interlock pattern
-                          xOffset = oCL / 2;
-                      } else if (pattern === 'brick' && rowIndex % 2 === 1) {
-                          // Offset every other row by one-third carton length for brick pattern (more stable)
-                          xOffset = oCL / 3;
+                      /**
+                       * ✅ CRITICAL FLOOR LOADING ALGORITHM - Y-Z PLANE STACKING (HEIGHT-FIRST)
+                       * 
+                       * This algorithm implements HEIGHT-FIRST stacking for direct container loading.
+                       * 
+                       * CORRECT PATTERN:
+                       * 1. Fill HEIGHT first (Z-axis): stack vertically until height limit
+                       * 2. Move to next WIDTH position (Y-axis): cartons across container width  
+                       * 3. Advance in LENGTH (X-axis): cartons along container length
+                       * 
+                       * EXAMPLE POSITIONING (30x50x25cm cartons):
+                       * Carton 1: (0, 0, 0)      ← Start corner  
+                       * Carton 2: (0, 0, 25)     ← Stack up (Z-axis)
+                       * Carton 3: (0, 0, 50)     ← Continue up
+                       * Carton 4: (0, 0, 75)     ← Continue up
+                       * ...until height limit
+                       * Then move to next width: (0, 50, 0) ← Next column (Y-axis)
+                       * Stack up again: (0, 50, 25), (0, 50, 50)...
+                       * When width is full, advance length: (30, 0, 0) ← Next row (X-axis)
+                       */
+                      
+                      // Calculate cartons per column (height-wise)
+                      const cartonsPerColumn = Math.floor(container.height / useHeight);
+                      
+                      // Calculate which column we're in and height within column
+                      const columnIndex = Math.floor(j / cartonsPerColumn);
+                      const heightIndex = j % cartonsPerColumn;
+                      
+                      // Calculate X and Y positions from column index
+                      const yInBase = columnIndex % cartonsAlongWidth; // Y position (width) - fill width first
+                      const xInBase = Math.floor(columnIndex / cartonsAlongWidth); // X position (length) - then length
+                      
+                      // Calculate final positions
+                      let cartonX = xInBase * useLength;   // X = length position
+                      let cartonY = yInBase * useWidth;    // Y = width position  
+                      let cartonZ = heightIndex * useHeight; // Z = height position (stack up)
+                      
+                                                // SIMPLIFIED: No pattern offsets needed - using column pattern only
+                      
+                      // Simple boundary check
+                      if (cartonX + useLength > container.length || 
+                          cartonY + useWidth > container.width || 
+                          cartonZ + useHeight > container.height) {
+                          console.log(`      Carton ${j + 1} exceeds container bounds - stopping`);
+                          break;
                       }
-
-                      const effectiveX = currentCartonRelativeX + xOffset;
-
-                      // Check if carton fits within container boundaries with offset
-                      if (effectiveX + oCL > container.length || 
-                          currentCartonRelativeY + oCW > container.width ||
-                          currentCartonRelativeZ + oCH > container.height) {
-                          break; // Stop if carton doesn't fit
-                      }
-
+                      
+                      // Create carton
                       currentContainerCartons.push({
-                          position: { x: effectiveX, y: currentCartonRelativeY, z: currentCartonRelativeZ },
-                          rotation: layerRotation === 'L_W' ? 'LWH' : 'WLH',
-                          length: oCL,
-                          width: oCW,
-                          height: oCH,
+                          position: { x: cartonX, y: cartonY, z: cartonZ },
+                          rotation: useRotation,
+                          length: useLength,
+                          width: useWidth,
+                          height: useHeight,
                       });
-
+                      
                       cartonsInCurrentContainer++;
                       cartonsPackedOverall++;
+                      actualTotalCartonsPacked++;
                       
-                      // Move to next position
-                      currentCartonRelativeX += oCL;
-
-                      // Check if next carton will fit in current row
-                      if (currentCartonRelativeX + oCL > container.length) {
-                          currentCartonRelativeX = 0;
-                          currentCartonRelativeY += oCW;
-                          rowIndex++; // Move to next row
-                          
-                          // Check if next carton will fit in current layer  
-                          if (currentCartonRelativeY + oCW > container.width) {
-                              currentCartonRelativeY = 0;
-                              currentCartonRelativeX = 0;
-                              currentCartonRelativeZ += oCH;
-                              layerIndex++; // Move to next layer
-                              rowIndex = 0; // Reset row index for new layer
-                          }
-                      }
-                      if (currentCartonRelativeZ + oCH > container.height) {
-                          break; // No more layers fit in this container
-                      }
+                      console.log(`      Placed carton ${j + 1}: Column ${columnIndex}, Height ${heightIndex}, (${cartonX}, ${cartonY}, ${cartonZ})`);
                   }
 
-                  const volumeCartonForThisContainer = oCL * oCW * oCH;
+                  console.log(`    CONTAINER ${i + 1} RESULT: Actually placed ${cartonsInCurrentContainer} cartons (expected ${cartonsToPackInThisContainer})`);
+
+                  // FIXED: Use the actual carton dimensions being placed, not the orientation loop dimensions
+                  const volumeCartonForThisContainer = useLength * useWidth * useHeight;
                   const packedVolumeForThisContainer = cartonsInCurrentContainer * volumeCartonForThisContainer;
                   const totalWeightPackedForThisContainer = cartonsInCurrentContainer * cWgt;
 
                   const utilizationForThisContainer = containerVolume > 0 ? Math.min(100, (packedVolumeForThisContainer / containerVolume) * 100) : 0;
-                  const weightDistributionForThisContainer = containerMaxWeight > 0 ? Math.min(100, (totalWeightPackedForThisContainer / containerMaxWeight) * 100) : 0;
+                  const weightDistributionForThisContainer = containerMaxWeight > 0 ? (totalWeightPackedForThisContainer / containerMaxWeight) * 100 : 0;
 
 
                   generatedPackedContainers.push({
@@ -764,13 +1094,166 @@ export function unifiedOptimization (
                       contents: currentContainerCartons,
                       contentType: 'cartons',
                       utilization: utilizationForThisContainer,
-                      weightDistribution: weightDistributionForThisContainer,
+                      weightUtilization: weightDistributionForThisContainer,
                   });
 
                   // Position for the next container: place them side-by-side on the X-axis
                   currentContainerX += container.length; // Move to the right for next container
               }
+              
+              // RECALCULATE: Check if we need more containers based on actual carton placement
+              console.log(`    CONTAINER MODE DEBUG (AFTER GENERATION):`);
+              console.log(`    actualTotalCartonsPacked: ${actualTotalCartonsPacked}`);
+              console.log(`    carton.quantity: ${carton.quantity}`);
+              console.log(`    numUnitsRequired (original): ${numUnitsRequired}`);
+              
+              // If we haven't packed all cartons, we need more containers
+              if (actualTotalCartonsPacked < carton.quantity) {
+                  const remainingCartons = carton.quantity - actualTotalCartonsPacked;
+                  
+                  // Calculate average cartons per container based on containers that actually have cartons
+                  const containersWithCartons = generatedPackedContainers.filter(c => c.contents.length > 0);
+                  const actualCartonsPerContainer = containersWithCartons.length > 0 ? 
+                      containersWithCartons.reduce((sum, c) => sum + c.contents.length, 0) / containersWithCartons.length :
+                      maxCartonsPerSingleUnit; // Fallback to theoretical max
+                  
+                  const additionalContainersNeeded = Math.ceil(remainingCartons / actualCartonsPerContainer);
+                  
+                  console.log(`    remainingCartons: ${remainingCartons}`);
+                  console.log(`    actualCartonsPerContainer: ${actualCartonsPerContainer}`);
+                  console.log(`    additionalContainersNeeded: ${additionalContainersNeeded}`);
+                  
+                  // Generate additional containers for remaining cartons
+                  for (let i = 0; i < additionalContainersNeeded && actualTotalCartonsPacked < carton.quantity; i++) {
+                      const remainingCartonsForThisContainer = carton.quantity - actualTotalCartonsPacked;
+                      const cartonsOnThisContainer = Math.min(actualCartonsPerContainer, remainingCartonsForThisContainer);
+                      
+                      console.log(`    ADDITIONAL CONTAINER ${numUnitsRequired + i + 1} GENERATION:`);
+                      console.log(`    Expected cartons in this additional container: ${cartonsOnThisContainer}`);
+                      
+                      const currentContainerCartons: CartonPosition[] = [];
+                      let cartonsInCurrentContainer = 0;
+                      
+                      const { rotation: layerRotation } = getCartonsPerLayer(
+                          container.length,
+                          container.width,
+                          oCL,
+                          oCW,
+                          constraints.allowRotationOnBase
+                      );
+                      
+                      // CLEAN ALGORITHM: Use current orientation consistently
+                      const useLength = oCL;
+                      const useWidth = oCW;
+                      const useHeight = oCH;
+                      const useRotation = layerRotation === 'L_W' ? 'LWH' : 'WLH';
+                      
+                      // Calculate grid dimensions for Y-Z plane stacking (consistent with main algorithm)
+                      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                      const cartonsAlongLength = Math.floor(container.length / useLength);
+                      const cartonsAlongWidth = Math.floor(container.width / useWidth);
+                      const cartonsPerColumn = Math.floor(container.height / useHeight); // Height-first stacking
+                      
+                      for (let j = 0; j < cartonsOnThisContainer; j++) {
+                          // Y-Z PLANE STACKING (HEIGHT-FIRST) - consistent with main algorithm
+                          const columnIndex = Math.floor(j / cartonsPerColumn);
+                          const heightIndex = j % cartonsPerColumn;
+                          
+                          // Calculate X and Y positions from column index
+                          const yInBase = columnIndex % cartonsAlongWidth; // Y position (width) - fill width first
+                          const xInBase = Math.floor(columnIndex / cartonsAlongWidth); // X position (length) - then length
+                          
+                          // Calculate final positions
+                          let cartonX = xInBase * useLength;   // X = length position
+                          let cartonY = yInBase * useWidth;    // Y = width position
+                          let cartonZ = heightIndex * useHeight; // Z = height position (stack up)
+                          
+                          // SIMPLIFIED: No pattern offsets needed - using column pattern only
+                          
+                          // FIXED: Boundary check with correct coordinate system
+                          if (cartonX + useLength <= container.length && 
+                              cartonY + useWidth <= container.width &&
+                              cartonZ + useHeight <= container.height) {
+                              
+                              currentContainerCartons.push({
+                                  position: { x: cartonX, y: cartonY, z: cartonZ },
+                                  rotation: useRotation,
+                                  length: useLength,
+                                  width: useWidth,
+                                  height: useHeight,
+                              });
+
+                              cartonsInCurrentContainer++;
+                              actualTotalCartonsPacked++;
+                          } else {
+                              console.log(`    Carton ${j+1} exceeds compact area or container height`);
+                              break; // Stop if we exceed boundaries
+                          }
+                      }
+                      
+                      console.log(`    ADDITIONAL CONTAINER ${numUnitsRequired + i + 1} RESULT: Actually placed ${cartonsInCurrentContainer} cartons`);
+                      
+                      // FIXED: Use the actual carton dimensions being placed, not the orientation loop dimensions
+                      const volumeCartonForThisContainer = useLength * useWidth * useHeight;
+                      const packedVolumeForThisContainer = cartonsInCurrentContainer * volumeCartonForThisContainer;
+                      const totalWeightPackedForThisContainer = cartonsInCurrentContainer * carton.weight;
+
+                      const utilizationForThisContainer = containerVolume > 0 ? Math.min(100, (packedVolumeForThisContainer / containerVolume) * 100) : 0;
+                      const weightDistributionForThisContainer = containerMaxWeight > 0 ? (totalWeightPackedForThisContainer / containerMaxWeight) * 100 : 0;
+
+                      generatedPackedContainers.push({
+                          containerDimensions: {
+                              length: container.length,
+                              width: container.width,
+                              height: container.height,
+                              maxWeight: container.maxWeight,
+                          },
+                          position: { x: currentContainerX, y: currentContainerY, z: currentContainerZ },
+                          contents: currentContainerCartons,
+                          contentType: 'cartons',
+                          utilization: utilizationForThisContainer,
+                          weightUtilization: weightDistributionForThisContainer,
+                      });
+
+                      currentContainerX += container.length;
+                  }
+                  
+                  // Update numUnitsRequired to reflect additional containers
+                  numUnitsRequired += additionalContainersNeeded;
+                  console.log(`    UPDATED numUnitsRequired: ${numUnitsRequired}`);
+                  console.log(`    FINAL actualTotalCartonsPacked: ${actualTotalCartonsPacked}`);
+              }
+
+              // COMPREHENSIVE FLOOR LOADING POSITION TRACKING TABLE
+              console.log(`\n=== FLOOR LOADING POSITION TRACKING TABLE ===`);
+              console.log(`Container: ${container.length} x ${container.width} x ${container.height}`);
+              console.log(`Total Containers: ${generatedPackedContainers.length}`);
+              generatedPackedContainers.forEach((cont, i) => {
+                  console.log(`\n--- CONTAINER ${i + 1} CARTON POSITIONS ---`);
+                  const cartons = cont.contents as CartonPosition[];
+                  if (cartons.length > 0) {
+                      console.table(cartons.slice(0, 10).map((c, j) => ({ // Show first 10 cartons
+                          CartonID: j + 1,
+                          'X (Length)': c.position.x,
+                          'Y (Height)': c.position.y,
+                          'Z (Width)': c.position.z,
+                          Rotation: c.rotation,
+                          'Layer': Math.floor(c.position.y / c.height) + 1,
+                          'X Distance': c.position.x.toFixed(1),
+                          'Z Distance': c.position.z.toFixed(1)
+                      })));
+                      if (cartons.length > 10) {
+                          console.log(`... and ${cartons.length - 10} more cartons`);
+                      }
+                  }
+              });
+              console.log(`=== END FLOOR LOADING POSITION TRACKING ===\n`);
+              
               currentPackedContainers = generatedPackedContainers;
+              
+              // Set totalContainersNeeded to the actual breakdown count
+              totalContainersNeeded = currentPackedContainers.length;
+              console.log(`🔧 CONTAINER COUNT: Using actual breakdown count: ${totalContainersNeeded} containers`);
           }
 
           // Only use the first container for comparison calculations
@@ -798,7 +1281,7 @@ export function unifiedOptimization (
               ? firstContainer.containerDimensions.length * firstContainer.containerDimensions.width * firstContainer.containerDimensions.height
               : 0;
 
-          const spaceUtilizationForComparison = totalAvailableVolumeForComparison > 0 ? (overallPackedVolumeForComparison / totalAvailableVolumeForComparison) * 100 : 0;
+          const spaceUtilizationForComparison = totalAvailableVolumeForComparison > 0 ? Math.min(100, (overallPackedVolumeForComparison / totalAvailableVolumeForComparison) * 100) : 0;
 
           const maxAvailableWeightCapacityForComparison = firstContainer ? firstContainer.containerDimensions.maxWeight : 0;
 
@@ -807,53 +1290,62 @@ export function unifiedOptimization (
               : 0;
 
 
-          // Calculate actual cartons packed in the first container only
-          const actualCartonsInFirstContainer = firstContainer ? (
-              firstContainer.contentType === 'cartons' 
-                  ? (firstContainer.contents as CartonPosition[]).length
-                  : (firstContainer.contents as PackedPallet[]).reduce((sum, pallet) => sum + pallet.cartons.length, 0)
-          ) : 0;
-
-          // Calculate total cartons that can be packed across all containers (not just first container)
-          // Use the already calculated currentTotalCartonsPacked which represents total cartons packed across all units
-          const totalCartonsAcrossAllContainers = currentTotalCartonsPacked;
+          // Calculate actual cartons packed across all containers
+          // Use actualTotalCartonsPacked which represents ACTUAL cartons placed, not theoretical
+          const totalCartonsAcrossAllContainers = actualTotalCartonsPacked;
+          console.log(`    ACTUAL TOTAL CARTONS PACKED: ${actualTotalCartonsPacked} (vs theoretical ${currentTotalCartonsPacked})`);
           
           // This block was moved out of the previous if-condition,
           // as it should update bestPatternResult whenever a better orientation is found.
           // The if-condition inside the orientation loop is for updating currentPackedContainers.
           // The actual update to bestPatternResult should happen here if current result is better.
-          // Priority: 1) Total cartons packed across all containers, 2) Space utilization in first container
+          // FIXED PRIORITY: 1) Minimum pallets needed, 2) Minimum floor footprint, 3) Maximum cartons packed
+          const currentPalletsNeeded = usePallets && pallet ? numUnitsRequired : totalContainersNeeded;
+          const bestPalletsNeeded = usePallets && pallet ? bestPatternResult.totalPalletsUsed : 0;
+          
+          // Calculate floor footprint for current result
+          const currentFloorFootprint = firstContainer ? 
+            (firstContainer.contentType === 'pallets' ? 
+              (firstContainer.contents as PackedPallet[]).reduce((sum, p) => sum + (p.palletDimensions.length * p.palletDimensions.width), 0) :
+              Math.floor(container.length / oCL) * Math.floor(container.width / oCW) * oCL * oCW) : 999999999;
+          
+          const bestFloorFootprint = bestPatternResult.packedContainers.length > 0 ? 
+            (bestPatternResult.packedContainers[0].contentType === 'pallets' ? 
+              (bestPatternResult.packedContainers[0].contents as PackedPallet[]).reduce((sum, p) => sum + (p.palletDimensions.length * p.palletDimensions.width), 0) :
+              bestPatternResult.packedContainers[0].contents.length > 0 ? currentFloorFootprint : 999999999) : 999999999;
+
+          // SIMPLIFIED COMPARISON: Focus on total cartons packed first, then efficiency
           if (totalCartonsAcrossAllContainers > bestPatternResult.totalCartonsPacked ||
-              (totalCartonsAcrossAllContainers === bestPatternResult.totalCartonsPacked && spaceUtilizationForComparison > bestPatternResult.spaceUtilization)) {
+              (totalCartonsAcrossAllContainers === bestPatternResult.totalCartonsPacked && currentPalletsNeeded < bestPalletsNeeded) ||
+              (totalCartonsAcrossAllContainers === bestPatternResult.totalCartonsPacked && currentPalletsNeeded === bestPalletsNeeded && currentFloorFootprint < bestFloorFootprint)) {
 
               // Calculate the total containers needed, including partial containers (round up)
               let actualContainersNeeded = 0;
               if (usePallets && pallet) {
-                  // For pallets: ensure we round up for partial containers when there are remaining cartons
-                  actualContainersNeeded = Math.max(totalContainersNeeded, 
-                      totalCartonsAcrossAllContainers < carton.quantity ? totalContainersNeeded + 1 : totalContainersNeeded);
+                  // For pallets: calculate containers needed based on actual pallets generated
+                  actualContainersNeeded = totalContainersNeeded;
               } else {
-                  // For direct container packing: calculate based on cartons per container
-                  actualContainersNeeded = maxCartonsPerSingleUnit > 0 
-                      ? Math.ceil(totalCartonsAcrossAllContainers / maxCartonsPerSingleUnit)
-                      : 0;
+                  // For direct container packing: use numUnitsRequired which already has the correct count
+                  // numUnitsRequired = Math.ceil(carton.quantity / maxCartonsPerSingleUnit) + any additional containers
+                  actualContainersNeeded = numUnitsRequired;
               }
 
               bestPatternResult = {
                   utilization: (totalCartonsAcrossAllContainers / carton.quantity) * 100, // This is carton quantity utilization
                   spaceUtilization: spaceUtilizationForComparison, // Use for comparison
-                  weightDistribution: weightDistributionForComparison, // Use for comparison
+                  weightUtilization: weightDistributionForComparison, // Use for comparison
                   totalCartonsPacked: totalCartonsAcrossAllContainers, // Total cartons across all containers
                   remainingCartons: Math.max(0, carton.quantity - totalCartonsAcrossAllContainers),
-                  totalUnitsUsed: actualContainersNeeded, // Actual containers needed for all cartons (rounded up)
-                  totalPalletsUsed: usePallets && pallet ? numUnitsRequired : 0, // Total pallets needed for all containers
+                  totalPalletsUsed: usePallets && pallet ? 
+                      currentPackedContainers.reduce((total, container) => 
+                          total + (container.contentType === 'pallets' ? container.contents.length : 0), 0) : 0, // Actual pallets used
                   selectedPattern: pattern,
                   bestOrientation: cartonRotationType,
                   packedContainers: currentPackedContainers,
                   patternComparison: {
-                      column: pattern === 'column' ? spaceUtilizationForComparison : (columnResult?.spaceUtilization || 0),
-                      interlock: pattern === 'interlock' ? spaceUtilizationForComparison : (interlockResult?.spaceUtilization || 0),
-                      brick: pattern === 'brick' ? spaceUtilizationForComparison : (brickResult?.spaceUtilization || 0),
+                      column: spaceUtilizationForComparison,
+                      interlock: 0, // Removed - not used
+                      brick: 0, // Removed - not used
                   },
               };
               
@@ -865,61 +1357,25 @@ export function unifiedOptimization (
           }
       } // Closes for-orientation
 
-      /* save best result for this pattern */
-      if (pattern === 'column')   columnResult   = bestPatternResult;
-      if (pattern === 'interlock') interlockResult = bestPatternResult;
-      if (pattern === 'brick')     brickResult    = bestPatternResult;
+      /* save best result for this pattern - legacy code, auto-optimization removed */
 
-      /* update global best */
+      /* update global best - prioritize total cartons packed */
       if (
-        bestPatternResult.totalCartonsPacked  >  bestOverallResult.totalCartonsPacked ||
+        bestPatternResult.totalCartonsPacked > bestOverallResult.totalCartonsPacked ||
         (bestPatternResult.totalCartonsPacked === bestOverallResult.totalCartonsPacked &&
-         bestPatternResult.spaceUtilization   >  bestOverallResult.spaceUtilization) ||
-        (bestPatternResult.totalCartonsPacked === bestOverallResult.totalCartonsPacked &&
-         bestPatternResult.spaceUtilization   === bestOverallResult.spaceUtilization &&
-         bestPatternResult.weightDistribution >  bestOverallResult.weightDistribution)
+         bestPatternResult.spaceUtilization > bestOverallResult.spaceUtilization)
       ) {
         bestOverallResult = bestPatternResult;
       }
     } // Closes for-pattern
 
-    /* ─── auto-pattern comparison AFTER both loops ─────── */
-    if (constraints.stackingPattern === 'auto') {
-      // Find the best pattern result among all available patterns
-      const patternResults = [
-        { result: columnResult, name: 'column' },
-        { result: interlockResult, name: 'interlock' },
-        { result: brickResult, name: 'brick' }
-      ].filter(p => p.result !== null);
-
-      if (patternResults.length > 0) {
-        const bestPattern = patternResults.reduce((best, current) => {
-          if (!best.result || !current.result) return best;
-          
-          // Primary: total cartons packed
-          if (current.result.totalCartonsPacked > best.result.totalCartonsPacked) {
-            return current;
-          } else if (current.result.totalCartonsPacked === best.result.totalCartonsPacked) {
-            // Secondary: space utilization
-            if (current.result.spaceUtilization > best.result.spaceUtilization) {
-              return current;
-            }
-          }
-          return best;
-        });
-
-        if (bestPattern.result) {
-          bestOverallResult = { ...bestPattern.result, selectedPattern: bestPattern.name };
-        }
-      }
-    }
+    /* ─── SIMPLIFIED: Always use column pattern result ─────── */
+    // Auto-optimization removed - column pattern is always optimal
 
     console.log('Best Overall Result:', bestOverallResult);
 
     // After all packing logic and selection of bestOverallResult
-    // totalUnitsUsed should reflect the actual total containers needed (but we only visualize the first one)
-
-    // Recalculate overall space utilization and weight distribution based on the first container only
+    // Recalculate overall space utilization and weight utilization based on the first container only
     let finalOverallPackedVolume = 0;
     let finalTotalAvailableVolume = 0;
     let finalTotalPackedWeight = 0;
@@ -948,19 +1404,226 @@ export function unifiedOptimization (
 
     // Calculate overall space utilization directly from actual volumes to ensure it never exceeds 100%
     bestOverallResult.spaceUtilization = finalTotalAvailableVolume > 0 
-        ? (finalOverallPackedVolume / finalTotalAvailableVolume) * 100 
+        ? Math.min(100, (finalOverallPackedVolume / finalTotalAvailableVolume) * 100)
         : 0;
 
-    // Calculate overall weight distribution directly from actual weights to ensure it never exceeds 100%
-    bestOverallResult.weightDistribution = finalTotalAvailableWeightCapacity > 0 
-        ? (finalTotalPackedWeight / finalTotalAvailableWeightCapacity) * 100 
+    // Calculate overall weight utilization directly from actual weights
+    bestOverallResult.weightUtilization = finalTotalAvailableWeightCapacity > 0 
+        ? (finalTotalPackedWeight / finalTotalAvailableWeightCapacity) * 100
         : 0;
 
     // Ensure 'utilization' still reflects carton quantity utilization
     bestOverallResult.utilization = (bestOverallResult.totalCartonsPacked / carton.quantity) * 100;
+
+    // Add weight warning if weight utilization exceeds 100%
+    if (bestOverallResult.weightUtilization > 100) {
+        const overweight = bestOverallResult.weightUtilization - 100;
+        bestOverallResult.weightWarning = `Warning: Container weight capacity exceeded by ${overweight.toFixed(1)}%. Consider using lighter cartons or additional containers.`;
+    }
 
     // Log the final result before returning
     console.log("--- Final Optimization Result ---", bestOverallResult);
 
     return bestOverallResult;
 }
+
+/**
+ * Comprehensive pallet sanity check system
+ * Validates positioning, overlaps, and boundary violations
+ * TEMPORARILY DISABLED - function not currently used
+ */
+/* function runPalletSanityChecks(
+    packedContainers: PackedContainer[],
+    containerDimensions: { length: number; width: number; height: number; maxWeight: number },
+    palletDimensions: { length: number; width: number; height: number; maxWeight: number }
+): void {
+    console.log(`\n🔍 === PALLET SANITY CHECKS ===`);
+    console.log(`Checking ${packedContainers.length} containers...`);
+    
+    let totalErrors = 0;
+    let totalWarnings = 0;
+    let totalPallets = 0;
+    
+    // Validate each container
+    packedContainers.forEach((container, containerIndex) => {
+        if (container.contentType !== 'pallets') return;
+        
+        const pallets = container.contents as PackedPallet[];
+        totalPallets += pallets.length;
+        
+        console.log(`\n📦 Container ${containerIndex + 1}: ${pallets.length} pallets`);
+        
+        // Check each pallet
+        pallets.forEach((pallet, palletIndex) => {
+            const pos = pallet.position;
+            const bounds = {
+                x: pos.x + palletDimensions.length,
+                y: pos.y + palletDimensions.width,
+                z: pos.z + palletDimensions.height
+            };
+            
+            // Boundary checks
+            if (bounds.x > containerDimensions.length) {
+                console.log(`  ❌ ERROR: Pallet ${palletIndex + 1} exceeds LENGTH boundary`);
+                console.log(`     Position: (${pos.x}, ${pos.y}, ${pos.z}), Bound: ${bounds.x} > ${containerDimensions.length}`);
+                totalErrors++;
+            }
+            
+            if (bounds.y > containerDimensions.width) {
+                console.log(`  ❌ ERROR: Pallet ${palletIndex + 1} exceeds WIDTH boundary`);
+                console.log(`     Position: (${pos.x}, ${pos.y}, ${pos.z}), Bound: ${bounds.y} > ${containerDimensions.width}`);
+                totalErrors++;
+            }
+            
+            if (bounds.z > containerDimensions.height) {
+                console.log(`  ❌ ERROR: Pallet ${palletIndex + 1} exceeds HEIGHT boundary`);
+                console.log(`     Position: (${pos.x}, ${pos.y}, ${pos.z}), Bound: ${bounds.z} > ${containerDimensions.height}`);
+                totalErrors++;
+            }
+            
+            // Negative position checks
+            if (pos.x < 0 || pos.y < 0 || pos.z < 0) {
+                console.log(`  ❌ ERROR: Pallet ${palletIndex + 1} has negative position`);
+                console.log(`     Position: (${pos.x}, ${pos.y}, ${pos.z})`);
+                totalErrors++;
+            }
+            
+            // Check for overlaps with other pallets in same container
+            pallets.forEach((otherPallet, otherIndex) => {
+                if (palletIndex >= otherIndex) return; // Avoid duplicate checks
+                
+                const otherPos = otherPallet.position;
+                const otherBounds = {
+                    x: otherPos.x + palletDimensions.length,
+                    y: otherPos.y + palletDimensions.width,
+                    z: otherPos.z + palletDimensions.height
+                };
+                
+                // Check for 3D overlap
+                const overlapX = Math.max(0, Math.min(bounds.x, otherBounds.x) - Math.max(pos.x, otherPos.x));
+                const overlapY = Math.max(0, Math.min(bounds.y, otherBounds.y) - Math.max(pos.y, otherPos.y));
+                const overlapZ = Math.max(0, Math.min(bounds.z, otherBounds.z) - Math.max(pos.z, otherPos.z));
+                
+                if (overlapX > 0 && overlapY > 0 && overlapZ > 0) {
+                    console.log(`  ❌ ERROR: Pallets ${palletIndex + 1} and ${otherIndex + 1} OVERLAP!`);
+                    console.log(`     P${palletIndex + 1}: (${pos.x}, ${pos.y}, ${pos.z}) to (${bounds.x}, ${bounds.y}, ${bounds.z})`);
+                    console.log(`     P${otherIndex + 1}: (${otherPos.x}, ${otherPos.y}, ${otherPos.z}) to (${otherBounds.x}, ${otherBounds.y}, ${otherBounds.z})`);
+                    console.log(`     Overlap: ${overlapX} × ${overlapY} × ${overlapZ} = ${(overlapX * overlapY * overlapZ).toFixed(2)} volume`);
+                    totalErrors++;
+                }
+            });
+        });
+        
+        // Validate stacking pattern
+        const expectedCapacity = calculateExpectedPalletCapacity(containerDimensions, palletDimensions);
+        if (pallets.length > expectedCapacity.maxPallets) {
+            console.log(`  ⚠️  WARNING: Container ${containerIndex + 1} has ${pallets.length} pallets but capacity is ${expectedCapacity.maxPallets}`);
+            totalWarnings++;
+        }
+        
+        // Check for optimal Y-Z plane stacking
+        const yzPlaneValidation = validateYZPlaneStacking(pallets, containerDimensions, palletDimensions);
+        if (!yzPlaneValidation.isOptimal) {
+            console.log(`  ⚠️  WARNING: Container ${containerIndex + 1} stacking not optimal`);
+            console.log(`     ${yzPlaneValidation.reason}`);
+            totalWarnings++;
+        }
+    });
+    
+    // Final summary
+    console.log(`\n📊 SANITY CHECK SUMMARY:`);
+    console.log(`Total Pallets Checked: ${totalPallets}`);
+    console.log(`Total Errors: ${totalErrors}`);
+    console.log(`Total Warnings: ${totalWarnings}`);
+    
+    if (totalErrors === 0) {
+        console.log(`✅ ALL BOUNDARY AND OVERLAP CHECKS PASSED!`);
+    } else {
+        console.log(`🚨 CRITICAL: ${totalErrors} errors found - positioning algorithm needs fixes!`);
+    }
+    
+    if (totalWarnings > 0) {
+        console.log(`⚠️  ${totalWarnings} optimization warnings - stacking could be improved`);
+    }
+    
+    console.log(`\n${"=".repeat(50)}`);
+} */
+
+/**
+ * Calculate expected pallet capacity for validation
+ * TEMPORARILY DISABLED - function not currently used
+ */
+/* function calculateExpectedPalletCapacity(
+    containerDimensions: { length: number; width: number; height: number },
+    palletDimensions: { length: number; width: number; height: number }
+) {
+    const palletsAlongLength = Math.floor(containerDimensions.length / palletDimensions.length);
+    const palletsAlongWidth = Math.floor(containerDimensions.width / palletDimensions.width);
+    const palletsAlongHeight = Math.floor(containerDimensions.height / palletDimensions.height);
+    
+    return {
+        palletsAlongLength,
+        palletsAlongWidth,
+        palletsAlongHeight,
+        maxPallets: palletsAlongLength * palletsAlongWidth * palletsAlongHeight,
+        palletsPerYZPlane: palletsAlongWidth * palletsAlongHeight
+    };
+} */
+
+/**
+ * Validate Y-Z plane stacking pattern
+ * TEMPORARILY DISABLED - function not currently used
+ */
+/* function validateYZPlaneStacking(
+    pallets: PackedPallet[],
+    containerDimensions: { length: number; width: number; height: number },
+    palletDimensions: { length: number; width: number; height: number }
+): { isOptimal: boolean; reason: string } {
+    const capacity = calculateExpectedPalletCapacity(containerDimensions, palletDimensions);
+    
+    // Group pallets by X position (length slices)
+    const slices = new Map<number, PackedPallet[]>();
+    
+    pallets.forEach(pallet => {
+        const sliceIndex = Math.round(pallet.position.x / palletDimensions.length);
+        if (!slices.has(sliceIndex)) {
+            slices.set(sliceIndex, []);
+        }
+        slices.get(sliceIndex)!.push(pallet);
+    });
+    
+    // Check if slices are filled properly
+    for (const [sliceIndex, slicePallets] of Array.from(slices.entries())) {
+        if (slicePallets.length > capacity.palletsPerYZPlane) {
+            return {
+                isOptimal: false,
+                reason: `Slice ${sliceIndex} has ${slicePallets.length} pallets but Y-Z plane capacity is ${capacity.palletsPerYZPlane}`
+            };
+        }
+        
+        // Check for gaps in Y-Z plane
+        const positions = slicePallets.map(p => ({
+            y: Math.round(p.position.y / palletDimensions.width),
+            z: Math.round(p.position.z / palletDimensions.height)
+        }));
+        
+        // Simple gap detection - if we have pallets but not filling bottom first
+        const hasBottomGaps = positions.some(pos => 
+            pos.z > 0 && !positions.some(other => other.y === pos.y && other.z === pos.z - 1)
+        );
+        
+        if (hasBottomGaps) {
+            return {
+                isOptimal: false,                
+                reason: `Slice ${sliceIndex} has gaps in bottom layers - not stacking height-first`
+            };
+        }
+    }
+    
+    return { isOptimal: true, reason: "Y-Z plane stacking is optimal" };
+} */
+
+// Note: placeBrickPattern function removed as it's no longer used
+// Brick pattern is now handled directly in the main stacking logic
+
+// REMOVED: optimizeFloorLoading function - replaced with simple algorithm

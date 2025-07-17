@@ -82,6 +82,71 @@ export function ContainerVisualization({
     directionalLight.position.set(1, 2, 1).normalize();
     newScene.add(directionalLight);
 
+    // Add container-aligned axes
+    const containerLength = firstContainer.containerDimensions.length / scaleFactor;
+    const containerWidth = firstContainer.containerDimensions.width / scaleFactor;
+    const containerHeight = firstContainer.containerDimensions.height / scaleFactor;
+    
+    // Create custom axes aligned with container edges
+    const axisGeometry = new THREE.BufferGeometry();
+    const axisPositions = new Float32Array([
+      // X-axis (Length) - Red - along bottom front edge
+      0, 0, 0,
+      containerLength, 0, 0,
+      // Y-axis (Height) - Green - along front left edge  
+      0, 0, 0,
+      0, containerHeight, 0,
+      // Z-axis (Width) - Blue - along bottom left edge
+      0, 0, 0,
+      0, 0, containerWidth
+    ]);
+    axisGeometry.setAttribute('position', new THREE.BufferAttribute(axisPositions, 3));
+    
+    const axisColors = new Float32Array([
+      // X-axis - Red
+      1, 0, 0,
+      1, 0, 0,
+      // Y-axis - Green
+      0, 1, 0,
+      0, 1, 0,
+      // Z-axis - Blue
+      0, 0, 1,
+      0, 0, 1
+    ]);
+    axisGeometry.setAttribute('color', new THREE.BufferAttribute(axisColors, 3));
+    
+    const axisMaterial = new THREE.LineBasicMaterial({ 
+      vertexColors: true,
+      linewidth: 3
+    });
+    const axisLines = new THREE.LineSegments(axisGeometry, axisMaterial);
+    newScene.add(axisLines);
+
+    // Add coordinate labels at the end of each axis
+    const createAxisLabel = (text: string, position: THREE.Vector3, color: number) => {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d')!;
+      canvas.width = 128;
+      canvas.height = 64;
+      context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+      context.font = 'Bold 20px Arial';
+      context.textAlign = 'center';
+      context.fillText(text, 64, 40);
+      
+      const texture = new THREE.CanvasTexture(canvas);
+      const material = new THREE.SpriteMaterial({ map: texture });
+      const sprite = new THREE.Sprite(material);
+      sprite.position.copy(position);
+      sprite.scale.set(containerLength * 0.15, containerLength * 0.075, 1);
+      return sprite;
+    };
+
+    // Position labels at the end of each axis with slight offset
+    const labelOffset = containerLength * 0.05;
+    newScene.add(createAxisLabel('X (Length)', new THREE.Vector3(containerLength + labelOffset, 0, 0), 0xff0000));
+    newScene.add(createAxisLabel('Y (Height)', new THREE.Vector3(0, containerHeight + labelOffset, 0), 0x00ff00));
+    newScene.add(createAxisLabel('Z (Width)', new THREE.Vector3(0, 0, containerWidth + labelOffset), 0x0000ff));
+
     // Iterate through each packed container
     packedContainers.forEach((packedContainer, containerIndex) => {
       // Container geometry
@@ -133,7 +198,7 @@ export function ContainerVisualization({
           const palletMesh = new THREE.Mesh(palletGeometry, palletMaterial);
           palletMesh.position.set(
             (packedContainer.position.x + palletObj.position.x + palletObj.palletDimensions.length / 2) / scaleFactor,
-            (packedContainer.position.z + palletObj.position.z + palletObj.palletDimensions.height / 2) / scaleFactor,
+            (packedContainer.position.z + palletObj.position.z + palletObj.palletDimensions.height / 2) / scaleFactor, // FIXED: Z is height in our coordinate system
             (packedContainer.position.y + palletObj.position.y + palletObj.palletDimensions.width / 2) / scaleFactor
           );
           newScene.add(palletMesh);
@@ -146,7 +211,7 @@ export function ContainerVisualization({
 
             cartonMesh.position.set(
               (packedContainer.position.x + palletObj.position.x + cartonPos.position.x + cartonPos.length / 2) / scaleFactor,
-              (packedContainer.position.z + palletObj.position.z + palletObj.palletDimensions.height + cartonPos.position.z + cartonPos.height / 2) / scaleFactor, // Z-position relative to pallet's top
+              (packedContainer.position.z + palletObj.position.z + cartonPos.position.z + cartonPos.height / 2) / scaleFactor, // FIXED: Z-position is height in our coordinate system
               (packedContainer.position.y + palletObj.position.y + cartonPos.position.y + cartonPos.width / 2) / scaleFactor
             );
 
@@ -162,7 +227,7 @@ export function ContainerVisualization({
           });
         });
       }
-      // Add text for utilization and weight distribution for this container (example)
+      // Add text for utilization and weight utilization for this container (example)
       const utilizationText = new THREE.CanvasTexture(
         (() => {
           const canvas = document.createElement('canvas');
@@ -172,7 +237,7 @@ export function ContainerVisualization({
           context.font = 'Bold 40px Arial';
           context.fillStyle = 'black';
           context.fillText(`Util: ${packedContainer.utilization.toFixed(1)}%`, 20, 80);
-          context.fillText(`Weight: ${packedContainer.weightDistribution.toFixed(1)}%`, 20, 160);
+          context.fillText(`Weight: ${packedContainer.weightUtilization.toFixed(1)}%`, 20, 160);
           return canvas;
         })()
       );

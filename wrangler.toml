@@ -1,0 +1,14 @@
+name = "pallet-calculator-v1"
+compatibility_date = "2024-01-15"
+pages_build_output_dir = "build"
+
+[env.production]
+compatibility_date = "2024-01-15"
+
+[env.staging]
+compatibility_date = "2024-01-15"
+
+# For Pages projects
+[build]
+command = "npm run build"
+publish = "build" 

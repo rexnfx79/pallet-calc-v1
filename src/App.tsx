@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './com
 import { NumericInputWithSlider } from './components/NumericInputWithSlider';
 import { PalletVisualization } from './components/PalletVisualization';
 import { unifiedOptimization, OptimizationResult, PackedPallet, CartonPosition } from "@/lib/autoPatternOptimization";
+// Advanced optimization import (commented out for now, can be re-enabled in the future)
+// import { advancedOptimization } from "@/lib/advancedOptimization";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import './index.css';
@@ -31,8 +33,8 @@ function App() {
     { label: "Asia Pallet (110 x 110 cm)", length: 110, width: 110 },
     { label: "Australian Pallet (116.5 x 116.5 cm)", length: 116.5, width: 116.5 },
   ];
-  const [palletLength, setPalletLength] = useState(commonPalletSizes[1].length);
-  const [palletWidth, setPalletWidth] = useState(commonPalletSizes[1].width);
+  const [palletLength, setPalletLength] = useState(commonPalletSizes[0].length);
+  const [palletWidth, setPalletWidth] = useState(commonPalletSizes[0].width);
   const [palletHeight, setPalletHeight] = useState(14.5);
 
   const [maxStackHeight, setMaxStackHeight] = useState(200);
@@ -41,106 +43,9 @@ function App() {
   // State for Carton Inputs
   const [cartonLength, setCartonLength] = useState(50);
   const [cartonWidth, setCartonWidth] = useState(30);
-  const [cartonHeight, setCartonHeight] = useState(20);
-  const [cartonWeight, setCartonWeight] = useState(5);
-  const [cartonQuantity, setCartonQuantity] = useState(100);
-
-  // Function to reset results when inputs change
-  const resetResults = () => {
-    setOptimizationResult(null);
-    setShowVisualization(false);
-  };
-
-  // Wrapper functions for state setters that reset results
-  const setCartonLengthAndReset = (value: number) => {
-    setCartonLength(value);
-    resetResults();
-  };
-  const setCartonWidthAndReset = (value: number) => {
-    setCartonWidth(value);
-    resetResults();
-  };
-  const setCartonHeightAndReset = (value: number) => {
-    setCartonHeight(value);
-    resetResults();
-  };
-  const setCartonWeightAndReset = (value: number) => {
-    setCartonWeight(value);
-    resetResults();
-  };
-  const setCartonQuantityAndReset = (value: number) => {
-    setCartonQuantity(value);
-    resetResults();
-  };
-  const setPalletLengthAndReset = (value: number) => {
-    setPalletLength(value);
-    resetResults();
-  };
-  const setPalletWidthAndReset = (value: number) => {
-    setPalletWidth(value);
-    resetResults();
-  };
-  const setPalletHeightAndReset = (value: number) => {
-    setPalletHeight(value);
-    resetResults();
-  };
-
-  const setMaxStackHeightAndReset = (value: number) => {
-    setMaxStackHeight(value);
-    resetResults();
-  };
-  const setMaxStackWeightAndReset = (value: number) => {
-    setMaxStackWeight(value);
-    resetResults();
-  };
-  const setContainerLengthAndReset = (value: number) => {
-    setContainerLength(value);
-    resetResults();
-  };
-  const setContainerWidthAndReset = (value: number) => {
-    setContainerWidth(value);
-    resetResults();
-  };
-  const setContainerHeightAndReset = (value: number) => {
-    setContainerHeight(value);
-    resetResults();
-  };
-  const setContainerWeightCapacityAndReset = (value: number) => {
-    setContainerWeightCapacity(value);
-    resetResults();
-  };
-  const setRotationEnabledAndReset = (value: boolean) => {
-    setRotationEnabled(value);
-    resetResults();
-  };
-  const setThisSideUpAndReset = (value: boolean) => {
-    setThisSideUp(value);
-    resetResults();
-  };
-  const setLoadBearingCapacityAndReset = (value: boolean) => {
-    setLoadBearingCapacity(value);
-    resetResults();
-  };
-  const setStackingPatternAndReset = (value: string) => {
-    setStackingPattern(value);
-    resetResults();
-  };
-
-  // Navigation functions
-  const tabs = ["carton-inputs", "pallet-inputs", "container-inputs", "optimization-settings", "results"];
-  const currentTabIndex = tabs.indexOf(activeTab);
-  
-  const goToPreviousTab = () => {
-    if (currentTabIndex > 0) {
-      setActiveTab(tabs[currentTabIndex - 1]);
-    }
-  };
-  
-  const goToNextTab = () => {
-    if (currentTabIndex < tabs.length - 1) {
-      setActiveTab(tabs[currentTabIndex + 1]);
-    }
-  };
+  const [cartonHeight, setCartonHeight] = useState(25);
+  const [cartonWeight, setCartonWeight] = useState(15);
+  const [cartonQuantity, setCartonQuantity] = useState(200);
 
   // State for Optimization Settings
   const [rotationEnabled, setRotationEnabled] = useState(true);
@@ -148,11 +53,152 @@ function App() {
   const [thisSideUp, setThisSideUp] = useState(false);
   const [loadBearingCapacity, setLoadBearingCapacity] = useState(false);
   const [stackingPattern, setStackingPattern] = useState("auto");
+  
+  // Advanced Algorithm Toggle (disabled for now, can be re-enabled in the future)
+  // const [useAdvancedAlgorithm] = useState(false);
 
   // State for Unit System
-  const [unitSystem, setUnitSystem] = useState<'metric' | 'imperial'>('metric');
+  const [unitSystem] = useState<'metric' | 'imperial'>('metric');
 
   const handleOptimize = () => {
+    // Comprehensive input validation before optimization
+    const validationErrors: string[] = [];
+    
+    // Validate carton dimensions
+    if (cartonLength <= 0) {
+      validationErrors.push("Carton length must be greater than zero");
+    }
+    if (cartonWidth <= 0) {
+      validationErrors.push("Carton width must be greater than zero");
+    }
+    if (cartonHeight <= 0) {
+      validationErrors.push("Carton height must be greater than zero");
+    }
+    if (cartonWeight <= 0) {
+      validationErrors.push("Carton weight must be greater than zero");
+    }
+    if (cartonQuantity <= 0) {
+      validationErrors.push("Carton quantity must be at least 1");
+    }
+    
+    // Validate container dimensions
+    if (containerLength <= 0) {
+      validationErrors.push("Container length must be greater than zero");
+    }
+    if (containerWidth <= 0) {
+      validationErrors.push("Container width must be greater than zero");
+    }
+    if (containerHeight <= 0) {
+      validationErrors.push("Container height must be greater than zero");
+    }
+    if (containerWeightCapacity <= 0) {
+      validationErrors.push("Container weight capacity must be greater than zero");
+    }
+    
+    // Validate pallet dimensions if using pallets
+    if (usePallets) {
+      if (palletLength <= 0) {
+        validationErrors.push("Pallet length must be greater than zero");
+      }
+      if (palletWidth <= 0) {
+        validationErrors.push("Pallet width must be greater than zero");
+      }
+      if (palletHeight <= 0) {
+        validationErrors.push("Pallet height must be greater than zero");
+      }
+      if (maxStackWeight <= 0) {
+        validationErrors.push("Maximum stack weight must be greater than zero");
+      }
+    }
+    
+    // Validate stack height
+    if (maxStackHeight <= 0) {
+      validationErrors.push("Maximum stack height must be greater than zero");
+    }
+    
+    // Validate logical constraints
+    if (usePallets) {
+      if (cartonLength > palletLength) {
+        validationErrors.push("Carton length cannot be greater than pallet length");
+      }
+      if (cartonWidth > palletWidth) {
+        validationErrors.push("Carton width cannot be greater than pallet width");
+      }
+      if (palletLength > containerLength) {
+        validationErrors.push("Pallet length cannot be greater than container length");
+      }
+      if (palletWidth > containerWidth) {
+        validationErrors.push("Pallet width cannot be greater than container width");
+      }
+      if (maxStackHeight > containerHeight) {
+        validationErrors.push("Maximum stack height cannot be greater than container height");
+      }
+    } else {
+      if (cartonLength > containerLength) {
+        validationErrors.push("Carton length cannot be greater than container length");
+      }
+      if (cartonWidth > containerWidth) {
+        validationErrors.push("Carton width cannot be greater than container width");
+      }
+      if (cartonHeight > containerHeight) {
+        validationErrors.push("Carton height cannot be greater than container height");
+      }
+    }
+    
+    // Check for NaN values
+    const allValues = [
+      { name: "carton length", value: cartonLength },
+      { name: "carton width", value: cartonWidth },
+      { name: "carton height", value: cartonHeight },
+      { name: "carton weight", value: cartonWeight },
+      { name: "carton quantity", value: cartonQuantity },
+      { name: "container length", value: containerLength },
+      { name: "container width", value: containerWidth },
+      { name: "container height", value: containerHeight },
+      { name: "container weight capacity", value: containerWeightCapacity },
+      { name: "maximum stack height", value: maxStackHeight }
+    ];
+    
+    if (usePallets) {
+      allValues.push(
+        { name: "pallet length", value: palletLength },
+        { name: "pallet width", value: palletWidth },
+        { name: "pallet height", value: palletHeight },
+        { name: "maximum stack weight", value: maxStackWeight }
+      );
+    }
+    
+    allValues.forEach(({ name, value }) => {
+      if (isNaN(value) || !isFinite(value)) {
+        validationErrors.push(`${name.charAt(0).toUpperCase() + name.slice(1)} must be a valid number`);
+      }
+    });
+    
+    // If there are validation errors, show them and stop optimization
+    if (validationErrors.length > 0) {
+      const errorResult = {
+        packedContainers: [],
+        utilization: 0,
+        spaceUtilization: 0,
+        weightUtilization: 0,
+        totalCartonsPacked: 0,
+        remainingCartons: 0,
+        totalPalletsUsed: 0,
+        patternComparison: { column: 0, interlock: 0, brick: 0 },
+        selectedPattern: 'auto',
+        bestOrientation: '',
+        error: `Please fix the following input errors:\n\n${validationErrors.map((error, index) => `${index + 1}. ${error}`).join('\n')}`
+      };
+      
+      console.log("=== VALIDATION ERRORS ===");
+      console.log("Errors found:", validationErrors);
+      
+      setOptimizationResult(errorResult);
+      setShowVisualization(false);
+      setActiveTab("results");
+      return;
+    }
+    
     const carton = {
       length: cartonLength,
       width: cartonWidth,
@@ -161,10 +207,13 @@ function App() {
       quantity: cartonQuantity,
     };
 
+    console.log("=== OPTIMIZATION START ===");
+    console.log("Input carton object:", carton);
+
     const constraints = {
       maxStackHeight: maxStackHeight,
       allowRotationOnBase: rotationEnabled,
-      allowVerticalRotation: false,
+      allowVerticalRotation: !thisSideUp, // Enable vertical rotation unless thisSideUp is checked
       stackingPattern: stackingPattern,
     };
 
@@ -182,6 +231,9 @@ function App() {
       maxWeight: maxStackWeight,
     };
 
+    // Use standard optimization algorithm
+    console.log("=== USING STANDARD OPTIMIZATION ALGORITHM ===");
+    
     const result = unifiedOptimization(
       carton,
       constraints,
@@ -192,10 +244,110 @@ function App() {
       thisSideUp
     );
 
+    console.log("=== OPTIMIZATION RESULT ===");
+    console.log("Result totalCartonsPacked:", result.totalCartonsPacked);
+    console.log("Result remainingCartons:", result.remainingCartons);
+    console.log("Full result:", result);
+
     setOptimizationResult(result);
     setShowVisualization(true);
     setActiveTab("results");
   };
+
+  const resetResults = () => {
+    setOptimizationResult(null)
+    setShowVisualization(false)
+  }
+
+  const setCartonLengthAndReset = (value: number) => {
+    setCartonLength(value)
+    resetResults()
+  }
+  const setCartonWidthAndReset = (value: number) => {
+    setCartonWidth(value)
+    resetResults()
+  }
+  const setCartonHeightAndReset = (value: number) => {
+    setCartonHeight(value)
+    resetResults()
+  }
+  const setCartonWeightAndReset = (value: number) => {
+    setCartonWeight(value)
+    resetResults()
+  }
+  const setCartonQuantityAndReset = (value: number) => {
+    setCartonQuantity(value)
+    resetResults()
+  }
+  const setPalletLengthAndReset = (value: number) => {
+    setPalletLength(value)
+    resetResults()
+  }
+  const setPalletWidthAndReset = (value: number) => {
+    setPalletWidth(value)
+    resetResults()
+  }
+  const setPalletHeightAndReset = (value: number) => {
+    setPalletHeight(value)
+    resetResults()
+  }
+
+  const setMaxStackHeightAndReset = (value: number) => {
+    setMaxStackHeight(value)
+    resetResults()
+  }
+  const setMaxStackWeightAndReset = (value: number) => {
+    setMaxStackWeight(value)
+    resetResults()
+  }
+  const setContainerLengthAndReset = (value: number) => {
+    setContainerLength(value)
+    resetResults()
+  }
+  const setContainerWidthAndReset = (value: number) => {
+    setContainerWidth(value)
+    resetResults()
+  }
+  const setContainerHeightAndReset = (value: number) => {
+    setContainerHeight(value)
+    resetResults()
+  }
+  const setContainerWeightCapacityAndReset = (value: number) => {
+    setContainerWeightCapacity(value)
+    resetResults()
+  }
+  const setRotationEnabledAndReset = (value: boolean) => {
+    setRotationEnabled(value)
+    resetResults()
+  }
+  const setThisSideUpAndReset = (value: boolean) => {
+    setThisSideUp(value)
+    resetResults()
+  }
+  const setLoadBearingCapacityAndReset = (value: boolean) => {
+    setLoadBearingCapacity(value)
+    resetResults()
+  }
+  const setStackingPatternAndReset = (value: string) => {
+    setStackingPattern(value)
+    resetResults()
+  }
+
+  // Navigation functions
+  const tabs = ["carton-inputs", "pallet-inputs", "container-inputs", "optimization-settings", "results"]
+  const currentTabIndex = tabs.indexOf(activeTab)
+  
+  const goToPreviousTab = () => {
+    if (currentTabIndex > 0) {
+      setActiveTab(tabs[currentTabIndex - 1])
+    }
+  }
+  
+  const goToNextTab = () => {
+    if (currentTabIndex < tabs.length - 1) {
+      setActiveTab(tabs[currentTabIndex + 1])
+    }
+  }
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-100 p-4 lg:p-6 pt-6 lg:pt-8">
@@ -204,7 +356,7 @@ function App() {
           <img 
             src="/logo.png" 
             alt="Pallet Calculator Logo" 
-            className="h-24 w-24 lg:h-20 lg:w-20 object-contain flex-shrink-0"
+            className="h-36 w-36 lg:h-32 lg:w-32 object-contain flex-shrink-0"
           />
           <div className="flex-1">
             <h1 className="text-4xl lg:text-3xl font-semibold text-gray-900 tracking-tight leading-tight">
@@ -234,35 +386,6 @@ function App() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 p-6 lg:p-8">
-                {/* Unit System Toggle */}
-                <div className="p-6 bg-gray-50/70 rounded-2xl border border-gray-200/50">
-                  <Label className="text-xl lg:text-lg font-semibold mb-4 block text-gray-900">Unit System</Label>
-                  <div className="flex items-center space-x-6">
-                    <label className="flex items-center space-x-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="unitSystem"
-                        value="metric"
-                        checked={unitSystem === 'metric'}
-                        onChange={(e) => setUnitSystem(e.target.value as 'metric' | 'imperial')}
-                        className="w-6 h-6 lg:w-5 lg:h-5 text-blue-500 border-2 border-gray-300 focus:ring-blue-500 focus:ring-2"
-                      />
-                      <span className="text-lg lg:text-base font-medium text-gray-700">Metric (cm, kg)</span>
-                    </label>
-                    <label className="flex items-center space-x-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="unitSystem"
-                        value="imperial"
-                        checked={unitSystem === 'imperial'}
-                        onChange={(e) => setUnitSystem(e.target.value as 'metric' | 'imperial')}
-                        className="w-6 h-6 lg:w-5 lg:h-5 text-blue-500 border-2 border-gray-300 focus:ring-blue-500 focus:ring-2"
-                      />
-                      <span className="text-lg lg:text-base font-medium text-gray-700">Imperial (in, lb)</span>
-                    </label>
-                  </div>
-                </div>
-                
                 <NumericInputWithSlider
                   id="carton-length"
                   baseLabel="Length"
@@ -347,7 +470,6 @@ function App() {
                       checked={usePallets}
                       onChange={(e) => {
                         setUsePallets(e.target.checked);
-                        resetResults();
                       }}
                       className="w-7 h-7 lg:w-6 lg:h-6 text-green-500 border-2 border-gray-300 rounded-lg focus:ring-green-500 focus:ring-2"
                     />
@@ -364,8 +486,8 @@ function App() {
                     if (!usePallets) return;
                     const selectedSize = commonPalletSizes.find(size => `${size.length}x${size.width}` === value);
                     if (selectedSize) {
-                      setPalletLengthAndReset(selectedSize.length);
-                      setPalletWidthAndReset(selectedSize.width);
+                      setPalletLength(selectedSize.length);
+                      setPalletWidth(selectedSize.width);
                     }
                   }} value={`${palletLength}x${palletWidth}`} disabled={!usePallets}>
                     <SelectTrigger id="pallet-size-select" className={`rounded-2xl ${!usePallets ? 'opacity-50 cursor-not-allowed' : ''}`}>
@@ -473,10 +595,10 @@ function App() {
                   <Select onValueChange={(value) => {
                     const selectedSize = commonContainerSizes.find(size => `${size.length}x${size.width}x${size.height}` === value);
                     if (selectedSize) {
-                      setContainerLengthAndReset(selectedSize.length);
-                      setContainerWidthAndReset(selectedSize.width);
-                      setContainerHeightAndReset(selectedSize.height);
-                      setContainerWeightCapacityAndReset(selectedSize.maxWeight);
+                      setContainerLength(selectedSize.length);
+                      setContainerWidth(selectedSize.width);
+                      setContainerHeight(selectedSize.height);
+                      setContainerWeightCapacity(selectedSize.maxWeight);
                     }
                   }} value={`${containerLength}x${containerWidth}x${containerHeight}`}>
                     <SelectTrigger id="container-size-select" className="rounded-2xl">
@@ -564,36 +686,42 @@ function App() {
               </CardHeader>
               <CardContent className="space-y-6 p-6 lg:p-8">
                 <div className="space-y-4">
-                  <Label htmlFor="stacking-pattern-select" className="text-xl lg:text-lg font-semibold text-gray-900">Stacking Pattern</Label>
-                  <Select onValueChange={setStackingPatternAndReset} value={stackingPattern}>
-                    <SelectTrigger id="stacking-pattern-select" className="rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <Label htmlFor="stacking-pattern-select" className="text-xl lg:text-lg font-semibold text-gray-400">Stacking Pattern</Label>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white">
+                      PRO
+                    </span>
+                  </div>
+                  <Select onValueChange={setStackingPatternAndReset} value={stackingPattern} disabled>
+                    <SelectTrigger id="stacking-pattern-select" className="rounded-2xl opacity-50 cursor-not-allowed">
                       <SelectValue placeholder="Select stacking pattern" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="auto">Auto-Optimize (Recommended)</SelectItem>
                       <SelectItem value="column">Column Stack</SelectItem>
-                      <SelectItem value="interlock">Interlocking</SelectItem>
-                      <SelectItem value="brick">Brick Pattern</SelectItem>
                     </SelectContent>
                   </Select>
-                  <p className="text-lg lg:text-base text-gray-600 bg-gray-50/70 p-4 rounded-2xl">
-                    {stackingPattern === "auto" && "Automatically selects the best pattern for maximum efficiency"}
-                    {stackingPattern === "column" && "Cartons stacked directly on top of each other in columns"}
-                    {stackingPattern === "interlock" && "Cartons positioned with offset rows for better interlocking"}
-                    {stackingPattern === "brick" && "Alternate rows are offset by one-third carton length - realistic brick pattern with full bottom support"}
+                  <p className="text-lg lg:text-base text-gray-500 bg-gray-50/70 p-4 rounded-2xl border border-gray-200">
+                    <span className="font-medium">🚀 PRO Feature:</span> Advanced stacking patterns are available in the professional version. Currently using optimized stacking for maximum efficiency.
                   </p>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="p-6 bg-gray-50/70 rounded-2xl border border-gray-200/50">
-                    <label className="flex items-center space-x-4 cursor-pointer">
+                  <div className={`p-6 rounded-2xl border ${!usePallets ? 'bg-gray-100 border-gray-300 opacity-50' : 'bg-gray-50/70 border-gray-200/50'}`}>
+                    <label className={`flex items-center space-x-4 ${!usePallets ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
                       <input
                         type="checkbox"
                         checked={rotationEnabled}
                         onChange={(e) => setRotationEnabledAndReset(e.target.checked)}
-                        className="w-7 h-7 lg:w-6 lg:h-6 text-purple-500 border-2 border-gray-300 rounded-lg focus:ring-purple-500 focus:ring-2"
+                        disabled={!usePallets}
+                        className={`w-7 h-7 lg:w-6 lg:h-6 border-2 rounded-lg ${!usePallets ? 'text-gray-400 border-gray-300 cursor-not-allowed' : 'text-purple-500 border-gray-300 focus:ring-purple-500 focus:ring-2'}`}
                       />
-                      <span className="text-xl lg:text-lg font-semibold text-gray-900">Enable Pallet Rotation</span>
+                      <div className="flex-1">
+                        <span className={`text-xl lg:text-lg font-semibold ${!usePallets ? 'text-gray-500' : 'text-gray-900'}`}>Enable Pallet Rotation</span>
+                        {!usePallets && (
+                          <p className="text-sm text-gray-400 mt-1">Only available when using pallets</p>
+                        )}
+                      </div>
                     </label>
                   </div>
                   
@@ -620,6 +748,8 @@ function App() {
                       <span className="text-xl lg:text-lg font-semibold text-gray-900">Consider Load Bearing Capacity</span>
                     </label>
                   </div>
+                  
+
                 </div>
               </CardContent>
               <div className="flex justify-between items-center p-8 bg-gray-50/30 mt-auto">
@@ -646,6 +776,18 @@ function App() {
                 <CardDescription className="text-emerald-100 text-lg lg:text-base">
                   Results from the last optimization calculation.
                 </CardDescription>
+                {optimizationResult && (
+                  <div className="mt-4 p-3 bg-white/20 backdrop-blur-sm rounded-xl border border-white/30">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-white">
+                        Mode: Specific Quantity
+                      </span>
+                      <span className="text-xs text-emerald-100 bg-white/20 px-2 py-1 rounded-lg">
+                        Optimized for {cartonQuantity} cartons
+                      </span>
+                    </div>
+                  </div>
+                )}
               </CardHeader>
               <CardContent className="p-6 lg:p-8">
                 {!optimizationResult ? (
@@ -658,34 +800,101 @@ function App() {
                       <p className="text-gray-400 text-xl lg:text-lg">Click "Optimize Loading" to generate results</p>
                     </div>
                   </div>
+                ) : optimizationResult.error ? (
+                  // Display validation errors
+                  <div className="max-w-4xl mx-auto">
+                    <div className="p-6 bg-red-50 border border-red-200 rounded-2xl">
+                      <div className="flex items-start">
+                        <div className="flex-shrink-0">
+                          <svg className="h-8 w-8 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="ml-4 flex-1">
+                          <h3 className="text-xl lg:text-lg font-semibold text-red-800 mb-3">
+                            Input Validation Errors
+                          </h3>
+                          <div className="text-red-700 whitespace-pre-line text-base lg:text-sm leading-relaxed">
+                            {optimizationResult.error}
+                          </div>
+                          <div className="mt-4 p-4 bg-white/80 rounded-xl border border-red-200">
+                            <p className="text-sm text-red-600 font-medium">
+                              💡 <strong>How to fix:</strong>
+                            </p>
+                            <ul className="text-sm text-red-600 mt-2 space-y-1 ml-4">
+                              <li>• Check that all dimension values are positive numbers</li>
+                              <li>• Ensure carton dimensions fit within pallet/container dimensions</li>
+                              <li>• Verify that quantities are whole numbers (1 or greater)</li>
+                              <li>• Make sure all weight values are positive</li>
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex flex-col lg:flex-row gap-8">
                     {/* Results Text Section */}
                     <div className="flex-1">
                       <div className="space-y-6">
                         <div className="p-6 bg-emerald-50/70 rounded-2xl">
-                          <h3 className="text-2xl lg:text-xl font-semibold mb-4 text-emerald-800">Summary</h3>
-                          <div className="grid grid-cols-2 gap-4">
+                          <h3 className="text-2xl lg:text-xl font-semibold mb-4 text-emerald-800">
+                            Packing Summary
+                          </h3>
+                          <div className="grid grid-cols-1 gap-4">
                             <div className="bg-white p-4 rounded-xl">
-                              <p className="text-base lg:text-sm text-gray-600 mb-1">Total Containers</p>
-                              <p className="text-3xl lg:text-2xl font-bold text-emerald-600">{optimizationResult.totalUnitsUsed}</p>
-                            </div>
-                            {usePallets && (
-                              <div className="bg-white p-4 rounded-xl">
-                                <p className="text-base lg:text-sm text-gray-600 mb-1">Total Pallets</p>
-                                <p className="text-3xl lg:text-2xl font-bold text-emerald-600">{optimizationResult.totalPalletsUsed}</p>
-                              </div>
-                            )}
-                            <div className="bg-white p-4 rounded-xl">
-                              <p className="text-base lg:text-sm text-gray-600 mb-1">Space Utilization</p>
-                              <p className="text-3xl lg:text-2xl font-bold text-blue-600">{optimizationResult.spaceUtilization.toFixed(1)}%</p>
-                            </div>
-                            <div className="bg-white p-4 rounded-xl">
-                              <p className="text-base lg:text-sm text-gray-600 mb-1">Weight Distribution</p>
-                              <p className="text-3xl lg:text-2xl font-bold text-purple-600">{optimizationResult.weightDistribution.toFixed(1)}%</p>
+                              <p className="text-base lg:text-sm text-gray-600 mb-1">Cartons Packed</p>
+                              <p className="text-3xl lg:text-2xl font-bold text-emerald-600">
+                                {Math.min(optimizationResult.totalCartonsPacked, cartonQuantity)}
+                              </p>
+                              <p className="text-xs text-gray-500">of {cartonQuantity} requested</p>
                             </div>
                           </div>
                         </div>
+
+                        {/* Weight Warning */}
+                        {optimizationResult.weightWarning && (
+                          <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                              <div className="ml-3">
+                                <p className="text-sm text-red-800">{optimizationResult.weightWarning}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Pattern Advantages */}
+                        {optimizationResult.patternAdvantages && optimizationResult.patternAdvantages.length > 0 && (
+                          <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+                            <div className="flex items-start">
+                              <div className="flex-shrink-0">
+                                <svg className="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+                                </svg>
+                              </div>
+                              <div className="ml-3">
+                                <h3 className="text-sm font-medium text-blue-800">
+                                  {optimizationResult.selectedPattern.charAt(0).toUpperCase() + optimizationResult.selectedPattern.slice(1)} Pattern Advantages
+                                </h3>
+                                <div className="mt-2">
+                                  <ul className="text-sm text-blue-700 space-y-1">
+                                    {optimizationResult.patternAdvantages.map((advantage, index) => (
+                                      <li key={index} className="flex items-center">
+                                        <span className="text-blue-500 mr-2">•</span>
+                                        {advantage}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {(() => {
                           if (!optimizationResult.packedContainers || optimizationResult.packedContainers.length === 0) {
@@ -703,14 +912,22 @@ function App() {
                             let cartons = 0;
                             let pallets = 0;
                             
+                            console.log(`=== CONTAINER ${index + 1} ANALYSIS ===`);
+                            console.log("Container contents:", container.contents);
+                            console.log("Container contentType:", container.contentType);
+                            
                             if (container.contents) {
                               if (usePallets && container.contentType === 'pallets') {
                                 pallets = container.contents.length;
                                 cartons = container.contents.reduce((total: number, pallet: any) => {
-                                  return total + (pallet.cartons?.length || 0);
+                                  const cartonCount = pallet.cartons?.length || 0;
+                                  console.log(`Pallet ${total / (pallet.cartons?.length || 1) + 1} has ${cartonCount} cartons`);
+                                  return total + cartonCount;
                                 }, 0);
+                                console.log(`Total from pallets: ${pallets} pallets, ${cartons} cartons`);
                               } else if (!usePallets && container.contentType === 'cartons') {
                                 cartons = container.contents.length;
+                                console.log(`Direct carton packing: ${cartons} cartons`);
                               }
                             }
                             
@@ -752,21 +969,6 @@ function App() {
                                   </div>
                                 </div>
                               ))}
-                              
-                              {optimizationResult.remainingCartons > 0 && (
-                                <div className="p-6 bg-orange-50/70 rounded-2xl border border-orange-200">
-                                  <h4 className="text-xl lg:text-lg font-semibold mb-3 text-orange-800">
-                                    Unpacked Cartons
-                                  </h4>
-                                  <div className="bg-white p-4 rounded-xl">
-                                    <p className="text-base lg:text-sm text-gray-600 mb-1">Remaining</p>
-                                    <p className="text-3xl lg:text-2xl font-bold text-orange-600">{optimizationResult.remainingCartons}</p>
-                                  </div>
-                                  <p className="text-base lg:text-sm text-orange-700 mt-3">
-                                    These cartons could not fit in the available container space.
-                                  </p>
-                                </div>
-                              )}
                             </div>
                           );
                         })()}
@@ -781,22 +983,21 @@ function App() {
                           <div className="w-full aspect-square max-w-sm mx-auto">
                             <PalletVisualization
                               pallets={usePallets
-                                ? (optimizationResult.packedContainers[0]?.contents as PackedPallet[] || [])
-                                : [
-                                  {
+                                ? (optimizationResult.packedContainers[0]?.contents as PackedPallet[] || []).slice(0, 30) // Show up to 30 pallets (one full container layer)
+                                : optimizationResult.packedContainers.slice(0, 1).map((container, index) => ({
                                     palletDimensions: {
                                       length: containerLength,
                                       width: containerWidth,
                                       height: containerHeight,
                                       maxWeight: containerWeightCapacity,
                                     },
-                                    position: { x: 0, y: 0, z: 0 },
-                                    cartons: (optimizationResult.packedContainers[0]?.contents as CartonPosition[] || [])
-                                  },
-                                ]}
+                                    position: { x: 0, y: 0, z: 0 },  // Always position at origin for visualization
+                                    cartons: (container.contents as CartonPosition[] || []).slice(0, 200) // Limit to 200 cartons for performance
+                                  }))}
                               cartonDimensions={{ length: cartonLength, width: cartonWidth, height: cartonHeight }}
                               containerDimensions={{ length: containerLength, width: containerWidth, height: containerHeight }}
                               utilization={optimizationResult.spaceUtilization}
+                              usePallets={usePallets}
                               className="h-full"
                             />
                           </div>
@@ -818,6 +1019,11 @@ function App() {
             </Card>
           </TabsContent>
         </Tabs>
+      </div>
+      
+      {/* Build Date Footer */}
+      <div className="text-center mt-4 text-sm text-gray-500">
+        Build: {process.env.REACT_APP_BUILD_TIME || new Date().toISOString()}
       </div>
     </div>
   );

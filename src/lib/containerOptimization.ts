@@ -26,7 +26,7 @@ export function optimizeContainerStacking(
   const results: OptimizationResults = {
     totalPallets: 0, // Will be 0 for no-pallet option
     spaceUtilization: 0,
-    weightDistribution: 0,
+    weightUtilization: 0,
     totalCartonsPacked: 0,
     palletArrangements: [], // Empty for no-pallet option
     containerArrangement: {
@@ -169,8 +169,19 @@ export function optimizeContainerStacking(
     results.spaceUtilization = 0;
   }
   
-  // Calculate weight distribution (simplified)
-  results.weightDistribution = 100; // Assuming even distribution for now
+  // Calculate weight utilization based on actual weight vs container capacity
+  if (container.maxWeight > 0) {
+    const totalWeight = results.totalCartonsPacked * carton.weight;
+    results.weightUtilization = (totalWeight / container.maxWeight) * 100;
+  } else {
+    results.weightUtilization = 0; // No weight capacity defined
+  }
+
+  // Add weight warning if weight utilization exceeds 100%
+  if (results.weightUtilization > 100) {
+    const overweight = results.weightUtilization - 100;
+    results.weightWarning = `Warning: Container weight capacity exceeded by ${overweight.toFixed(1)}%. Consider using lighter cartons or additional containers.`;
+  }
   
   return results;
 }
@@ -241,21 +252,17 @@ function calculateMaxLayers(
   const availableHeight = Math.min(maxHeightConstraint, container.height);
   const heightLimitedLayers = Math.floor(availableHeight / carton.height);
   
-  // Calculate weight limitation
-  const cartonsPerLayer = calculateCartonsPerLayer(carton, container, constraints.allowRotationOnBase).count;
-  const weightPerLayer = cartonsPerLayer * (carton.weight || 0);
-  const weightLimitedLayers = weightPerLayer > 0 && isValidNumber(container.maxWeight)
-    ? Math.floor(container.maxWeight / weightPerLayer) 
-    : Infinity;
-  
   // Apply fragility constraints
   let fragilityLimitedLayers = Infinity;
   if (carton.fragile) {
     fragilityLimitedLayers = constraints.stackingPattern === 'column' ? 1 : 3;
   }
   
-  // Return the most restrictive limit
-  return Math.max(0, Math.min(heightLimitedLayers, weightLimitedLayers, fragilityLimitedLayers));
+  // REMOVED: Weight limitation logic to prioritize height and conserve floor space
+  // Containers should be stacked as high as allowed regardless of weight distribution
+  
+  // Return height or fragility limit only (weight constraint removed)
+  return Math.max(0, Math.min(heightLimitedLayers, fragilityLimitedLayers));
 }
 
 /**

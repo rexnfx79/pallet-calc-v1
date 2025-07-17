@@ -97,11 +97,12 @@ export interface ContainerArrangement {
 export interface OptimizationResults {
   totalPallets: number;
   spaceUtilization: number;
-  weightDistribution: number;
+  weightUtilization: number;
   totalCartonsPacked: number;
   palletArrangements: PalletArrangement[];
   containerArrangement: ContainerArrangement;
   remainingCartons: number;
+  weightWarning?: string; // Warning message for weight exceeding capacity
 }
 
 /**
@@ -117,7 +118,7 @@ export function optimizePalletStacking(
   const results: OptimizationResults = {
     totalPallets: 0,
     spaceUtilization: 0,
-    weightDistribution: 0,
+    weightUtilization: 0,
     totalCartonsPacked: 0,
     palletArrangements: [],
     containerArrangement: {
@@ -344,13 +345,24 @@ export function optimizePalletStacking(
     });
   } else {
     results.spaceUtilization = 0;
-  }  
-  // Calculate weight distribution (simplified)
-  results.weightDistribution = 100; // Assuming even distribution for now
+    }
+  // Calculate weight utilization based on actual weight vs container capacity
+  if (container && container.maxWeight > 0) {
+    const totalWeight = results.totalCartonsPacked * carton.weight;
+    results.weightUtilization = (totalWeight / container.maxWeight) * 100;
+  } else {
+    results.weightUtilization = 0; // No weight capacity defined
+  }
   
   // Calculate container arrangement if container dimensions are provided
   if (container) {
     results.containerArrangement = arrangeInContainer(results.palletArrangements, container);
+  }
+
+  // Add weight warning if weight utilization exceeds 100%
+  if (results.weightUtilization > 100) {
+    const overweight = results.weightUtilization - 100;
+    results.weightWarning = `Warning: Container weight capacity exceeded by ${overweight.toFixed(1)}%. Consider using lighter cartons or additional containers.`;
   }
   
   return results;
@@ -452,42 +464,27 @@ function calculateMaxLayers(
   const availableHeight = maxHeightConstraint - pallet.height;
   const heightLimitedLayers = Math.floor(availableHeight / carton.height);
   
-  // Calculate weight limitation
-  const cartonsPerLayer = calculateCartonsPerLayer(carton, pallet, constraints.allowRotationOnBase).count;
-  const weightPerLayer = cartonsPerLayer * carton.weight;
-  
-  // Prevent division by zero
-  let weightLimitedLayers = Infinity;
-  if (weightPerLayer > 0) {
-    weightLimitedLayers = Math.floor(pallet.maxWeight / weightPerLayer);
-  } else {
-    console.warn("TRACE - weightPerLayer is zero or invalid:", {
-      cartonsPerLayer,
-      cartonWeight: carton.weight,
-      weightPerLayer
-    });
-  }
-  
   // Apply fragility constraints
   let fragilityLimitedLayers = Infinity;
   if (carton.fragile) {
     fragilityLimitedLayers = constraints.stackingPattern === 'column' ? 1 : 3;
   }
   
+  // REMOVED: Weight limitation logic to prioritize height and conserve floor space
+  // Pallets should be stacked as high as allowed regardless of weight distribution
+  
   // Log detailed calculation results
   console.log("TRACE - calculateMaxLayers detailed calculation:", {
     maxHeightConstraint,
     availableHeight,
     heightLimitedLayers,
-    cartonsPerLayer,
-    weightPerLayer,
-    weightLimitedLayers,
     fragilityLimitedLayers,
-    finalMaxLayers: Math.max(0, Math.min(heightLimitedLayers, weightLimitedLayers, fragilityLimitedLayers))
+    finalMaxLayers: Math.max(0, Math.min(heightLimitedLayers, fragilityLimitedLayers)),
+    note: "Weight constraints removed to prioritize height and conserve floor space"
   });
   
-  // Return the most restrictive limit, ensuring it's not negative
-  return Math.max(0, Math.min(heightLimitedLayers, weightLimitedLayers, fragilityLimitedLayers));
+  // Return height or fragility limit only (weight constraint removed)
+  return Math.max(0, Math.min(heightLimitedLayers, fragilityLimitedLayers));
 }
 
 /**
@@ -855,52 +852,5 @@ function arrangeInContainer(
   return containerArrangement;
 }
 
-/**
- * Utility function to convert dimensions between units
- */
-export function convertDimension(value: number, fromUnit: string, toUnit: string): number {
-  // Convert to mm first
-  let valueInMm;
-  switch (fromUnit) {
-    case 'mm': valueInMm = value; break;
-    case 'cm': valueInMm = value * 10; break;
-    case 'm': valueInMm = value * 1000; break;
-    case 'in': valueInMm = value * 25.4; break;
-    case 'ft': valueInMm = value * 304.8; break;
-    default: valueInMm = value;
-  }
-  
-  // Convert from mm to target unit
-  switch (toUnit) {
-    case 'mm': return valueInMm;
-    case 'cm': return valueInMm / 10;
-    case 'm': return valueInMm / 1000;
-    case 'in': return valueInMm / 25.4;
-    case 'ft': return valueInMm / 304.8;
-    default: return valueInMm;
-  }
-}
-
-/**
- * Utility function to convert weight between units
- */
-export function convertWeight(value: number, fromUnit: string, toUnit: string): number {
-  // Convert to grams first
-  let valueInGrams;
-  switch (fromUnit) {
-    case 'g': valueInGrams = value; break;
-    case 'kg': valueInGrams = value * 1000; break;
-    case 'lb': valueInGrams = value * 453.592; break;
-    case 'oz': valueInGrams = value * 28.3495; break;
-    default: valueInGrams = value;
-  }
-  
-  // Convert from grams to target unit
-  switch (toUnit) {
-    case 'g': return valueInGrams;
-    case 'kg': return valueInGrams / 1000;
-    case 'lb': return valueInGrams / 453.592;
-    case 'oz': return valueInGrams / 28.3495;
-    default: return valueInGrams;
-  }
-}
+// Import standardized conversion functions from utils.ts
+import { convertDimension, convertWeight } from './utils';
