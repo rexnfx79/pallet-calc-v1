@@ -6,11 +6,11 @@
 - **URL**: https://1513267d.pallet-calculator-v1.pages.dev
 - **Platform**: Cloudflare Pages
 - **Version**: 1.0.0
-- **Deployment Date**: January 2025
+- **Deployment Date**: January 2024
 
 ### 📦 Build Information
 - **Build Size**: 239.51 kB (main.js) + 6.31 kB (main.css)
-- **Build Tool**: Create React App with Craco
+- **Build Tool**: Create React App (CRA) with CRACO overrides
 - **Files Uploaded**: 9 files
 - **Build Time**: ~4 seconds
 
